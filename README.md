@@ -1,5 +1,9 @@
 # Muninn
 
+[![PyPI version](https://badge.fury.io/py/muninn-mcp.svg)](https://pypi.org/project/muninn-mcp/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 > *"Odin feared losing Muninn more than Huginn — losing memory is worse than losing thought."*
 
 **Cross-tool project memory for AI assistants.** Muninn (MOO-nin) is an MCP server that gives Claude, ChatGPT, Cursor, and other AI tools shared, persistent, project-structured memory.
@@ -28,10 +32,15 @@ Zero copy-paste. Zero re-explanation. Works across any MCP-compatible tool.
 ### Install
 
 ```bash
-# From source (recommended during alpha)
+# From PyPI (recommended)
+pip install muninn-mcp            # basic (stdio only)
+pip install muninn-mcp[http]      # with HTTP transport
+pip install muninn-mcp[all]       # everything
+
+# From source (development)
 git clone https://github.com/ilwonyoon/muninn.git
 cd muninn
-pip install -e .
+pip install -e ".[dev]"
 ```
 
 ### Connect to Claude Desktop
@@ -154,7 +163,7 @@ SQLite with WAL mode. Single file. Back up with `cp muninn.db muninn.db.bak`.
 # Install with dev deps
 pip install -e ".[dev]"
 
-# Run tests (104 tests)
+# Run tests (132+ tests)
 python -m pytest tests/ -v
 
 # Run the server (stdio)

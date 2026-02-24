@@ -168,6 +168,11 @@ def _fetch_tags_for_memories(
 class MuninnStore:
     """SQLite-backed store for Muninn projects and memories."""
 
+    @staticmethod
+    def default_db_path() -> str:
+        """Return the resolved database path (without creating a store)."""
+        return _resolve_db_path(None)
+
     def __init__(self, db_path: str | None = None) -> None:
         self._db_path = _resolve_db_path(db_path)
 

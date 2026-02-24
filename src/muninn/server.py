@@ -4,10 +4,16 @@ Supports two transports:
   - stdio (default): for Claude Desktop, Claude Code, Cursor, Codex
   - streamable-http: for Claude Web/Mobile, ChatGPT, remote access
 
+Authentication modes (HTTP only):
+  - MUNINN_OWNER_PASSWORD: OAuth 2.0 (for claude.ai, iPhone)
+  - MUNINN_API_KEY: Bearer token (for direct API access)
+  - Neither: no auth (local dev only)
+
 Usage:
   muninn                          # stdio (default)
   muninn --transport http         # HTTP on 127.0.0.1:8000
   muninn --transport http --port 9000 --host 0.0.0.0
+  muninn --transport http --public-url https://abc.ngrok-free.dev
 """
 
 from __future__ import annotations
@@ -63,6 +69,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=8000,
         help="HTTP port to bind (default: 8000)",
     )
+    parser.add_argument(
+        "--public-url",
+        default=None,
+        help="Public URL for OAuth issuer (e.g. https://abc.ngrok-free.dev)",
+    )
     return parser
 
 
@@ -70,13 +81,52 @@ def _create_mcp(
     *,
     host: str = "127.0.0.1",
     port: int = 8000,
+    public_url: str | None = None,
 ) -> FastMCP:
-    """Create and configure the FastMCP instance with all tools registered."""
+    """Create and configure the FastMCP instance with all tools registered.
+
+    When ``MUNINN_OWNER_PASSWORD`` is set, configures the MCP SDK's built-in
+    OAuth 2.0 authorization server for claude.ai / iPhone remote access.
+    """
+    oauth_kwargs: dict = {}
+    owner_password = os.environ.get("MUNINN_OWNER_PASSWORD")
+
+    if owner_password:
+        from mcp.server.auth.settings import (
+            AuthSettings,
+            ClientRegistrationOptions,
+            RevocationOptions,
+        )
+        from pydantic import AnyHttpUrl
+
+        from muninn.oauth_provider import MuninnOAuthProvider
+
+        issuer = public_url or f"http://{host}:{port}"
+        db_path = MuninnStore.default_db_path()
+
+        oauth_kwargs["auth_server_provider"] = MuninnOAuthProvider(
+            db_path=db_path,
+            owner_password=owner_password,
+        )
+        oauth_kwargs["auth"] = AuthSettings(
+            issuer_url=AnyHttpUrl(issuer),
+            resource_server_url=AnyHttpUrl(issuer),
+            client_registration_options=ClientRegistrationOptions(
+                enabled=True,
+                valid_scopes=["muninn"],
+                default_scopes=["muninn"],
+            ),
+            revocation_options=RevocationOptions(enabled=True),
+            required_scopes=[],
+        )
+
     mcp = FastMCP(
         "muninn",
         instructions=_INSTRUCTIONS,
         host=host,
         port=port,
+        streamable_http_path="/",
+        **oauth_kwargs,
     )
     mcp.tool()(muninn_save)
     mcp.tool()(muninn_recall)
@@ -89,23 +139,43 @@ def _create_mcp(
 def _run_http(mcp: FastMCP, host: str, port: int) -> None:
     """Run the server with Streamable HTTP transport.
 
-    If ``MUNINN_API_KEY`` is set, wraps the ASGI app with Bearer token
-    authentication middleware.
+    Auth mode priority:
+      1. MUNINN_OWNER_PASSWORD → OAuth 2.0 (already wired into FastMCP)
+      2. MUNINN_API_KEY → Bearer token middleware
+      3. Neither → no auth (warning)
     """
+    import uvicorn
+
+    owner_password = os.environ.get("MUNINN_OWNER_PASSWORD")
     api_key = os.environ.get("MUNINN_API_KEY")
 
-    if api_key:
-        # Wrap with auth middleware
+    if owner_password:
+        # OAuth mode — FastMCP already has auth routes via constructor.
+        # Inject login routes into the MCP app via _custom_starlette_routes.
+        from muninn.oauth_login import create_login_routes
+
+        login_routes = create_login_routes(
+            mcp._auth_server_provider,  # type: ignore[arg-type]
+        )
+        mcp._custom_starlette_routes.extend(login_routes)
+
+        app = mcp.streamable_http_app()
+
+        print(
+            "OAuth 2.0 mode enabled. PIN required for authorization.",
+            file=sys.stderr,
+        )
+        uvicorn.run(app, host=host, port=port)
+    elif api_key:
+        # Legacy Bearer token mode.
         from muninn.auth import create_authenticated_app
 
         app = create_authenticated_app(mcp, api_key)
-
-        import uvicorn
-
         uvicorn.run(app, host=host, port=port)
     else:
         print(
-            "WARNING: No MUNINN_API_KEY set. HTTP server running without authentication.",
+            "WARNING: No MUNINN_OWNER_PASSWORD or MUNINN_API_KEY set. "
+            "HTTP server running without authentication.",
             file=sys.stderr,
         )
         mcp.run(transport="streamable-http")
@@ -118,7 +188,11 @@ def main() -> None:
 
     init_store(MuninnStore())
 
-    mcp = _create_mcp(host=args.host, port=args.port)
+    mcp = _create_mcp(
+        host=args.host,
+        port=args.port,
+        public_url=args.public_url,
+    )
 
     if args.transport == "http":
         _run_http(mcp, args.host, args.port)
