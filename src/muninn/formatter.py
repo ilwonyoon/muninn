@@ -236,7 +236,7 @@ def format_save_confirmation(memory: Memory, project: Project) -> str:
     """
     label = _DEPTH_LABELS.get(memory.depth, str(memory.depth))
     tags_display = ", ".join(memory.tags) if memory.tags else "none"
-    short_id = memory.id[:6] if len(memory.id) >= 6 else memory.id
+    short_id = memory.id[:8] if len(memory.id) >= 8 else memory.id
 
     line1 = f"Saved to {project.id} (memory: {short_id})"
     line2 = f"Depth: {label} | Tags: {tags_display} | Project memories: {project.memory_count}"

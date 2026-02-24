@@ -390,3 +390,108 @@ class TestMuninnManageUnknownAction:
 
         assert "Error" in result
         assert "teleport" in result
+
+
+# ---------------------------------------------------------------------------
+# Edge cases: Content validation via tools
+# ---------------------------------------------------------------------------
+
+
+class TestSaveContentValidation:
+    def test_save_empty_content_returns_error(self, initialized_store):
+        """Saving empty content via muninn_save returns an error message."""
+        result = muninn_save(project="val-proj", content="")
+        assert "Error" in result
+
+    def test_save_whitespace_content_returns_error(self, initialized_store):
+        """Saving whitespace-only content via muninn_save returns error."""
+        result = muninn_save(project="val-proj", content="   \n  ")
+        assert "Error" in result
+
+
+# ---------------------------------------------------------------------------
+# Edge cases: Search limit via tools
+# ---------------------------------------------------------------------------
+
+
+class TestSearchLimit:
+    def test_search_with_custom_limit(self, initialized_store):
+        """muninn_search respects the limit parameter."""
+        initialized_store.create_project(id="lim-proj", name="Limit")
+        for i in range(20):
+            initialized_store.save_memory(
+                project_id="lim-proj", content=f"limitquery item {i}"
+            )
+
+        result = muninn_search(query="limitquery", limit=3)
+        # The result should contain "3 results found" or fewer
+        assert "3 result" in result or "2 result" in result or "1 result" in result
+
+
+# ---------------------------------------------------------------------------
+# Edge cases: Update memory via manage with empty content
+# ---------------------------------------------------------------------------
+
+
+class TestManageUpdateMemoryValidation:
+    def test_update_memory_empty_content_returns_error(self, initialized_store):
+        """update_memory with empty content via muninn_manage returns error."""
+        initialized_store.create_project(id="um-val", name="UM Val")
+        mem = initialized_store.save_memory(project_id="um-val", content="Original")
+        result = muninn_manage(
+            action="update_memory",
+            project="um-val",
+            memory_id=mem.id,
+            field="content",
+            value="",
+        )
+        assert "Error" in result
+
+    def test_update_memory_whitespace_content_returns_error(self, initialized_store):
+        """update_memory with whitespace content returns error."""
+        initialized_store.create_project(id="um-val2", name="UM Val2")
+        mem = initialized_store.save_memory(project_id="um-val2", content="Original")
+        result = muninn_manage(
+            action="update_memory",
+            project="um-val2",
+            memory_id=mem.id,
+            field="content",
+            value="   ",
+        )
+        assert "Error" in result
+
+
+# ---------------------------------------------------------------------------
+# Edge cases: Duplicate project via manage
+# ---------------------------------------------------------------------------
+
+
+class TestManageCreateDuplicateProject:
+    def test_create_duplicate_project_returns_error(self, initialized_store):
+        """create_project with existing ID returns error, not crash."""
+        initialized_store.create_project(id="dup-proj", name="First")
+        result = muninn_manage(
+            action="create_project",
+            project="dup-proj",
+            value="Second",
+        )
+        assert "Error" in result
+        assert "already exists" in result
+
+
+# ---------------------------------------------------------------------------
+# Edge cases: Update project with unknown kwargs via manage
+# ---------------------------------------------------------------------------
+
+
+class TestManageUpdateProjectUnknownField:
+    def test_update_project_unknown_field_returns_error(self, initialized_store):
+        """update_project with an invalid field returns a clear error."""
+        initialized_store.create_project(id="unk-proj", name="Unknown Field")
+        result = muninn_manage(
+            action="update_project",
+            project="unk-proj",
+            field="nonexistent",
+            value="something",
+        )
+        assert "Error" in result

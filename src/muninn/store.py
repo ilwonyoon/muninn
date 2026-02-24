@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from muninn.models import Memory, MemorySource, Project, ProjectStatus
+from muninn.models import Memory, MemorySource, Project, ProjectStatus, validate_memory_content
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -17,7 +17,7 @@ from muninn.models import Memory, MemorySource, Project, ProjectStatus
 _DEFAULT_DB_DIR = os.path.join(os.path.expanduser("~"), ".local", "share", "muninn")
 _DEFAULT_DB_NAME = "muninn.db"
 
-_CURRENT_SCHEMA_VERSION = 1
+_CURRENT_SCHEMA_VERSION = 2
 
 _SCHEMA_SQL = """\
 PRAGMA journal_mode=WAL;
@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS memory_tags (
     PRIMARY KEY (memory_id, tag)
 );
 CREATE INDEX IF NOT EXISTS idx_memory_tags_tag ON memory_tags(tag);
+CREATE INDEX IF NOT EXISTS idx_memories_project_id ON memories(project_id);
+CREATE INDEX IF NOT EXISTS idx_memories_superseded_by ON memories(superseded_by);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     content,
@@ -74,7 +76,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
     applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+INSERT OR IGNORE INTO schema_version (version) VALUES (2);
 """
 
 
@@ -83,8 +85,9 @@ INSERT OR IGNORE INTO schema_version (version) VALUES (1);
 # ---------------------------------------------------------------------------
 
 def _now_iso() -> str:
-    """Return the current UTC time as an ISO-8601 string."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """Return the current UTC time as an ISO-8601 string with millisecond precision."""
+    now = datetime.now(timezone.utc)
+    return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
 
 
 def _resolve_db_path(db_path: str | None) -> str:
@@ -117,7 +120,7 @@ def _row_to_project(row: sqlite3.Row, *, memory_count: int = 0) -> Project:
     )
 
 
-def _row_to_memory(row: sqlite3.Row, *, tags: list[str] | None = None) -> Memory:
+def _row_to_memory(row: sqlite3.Row, *, tags: tuple[str, ...] | None = None) -> Memory:
     """Convert a sqlite3.Row from the memories table into a Memory."""
     return Memory(
         id=row["id"],
@@ -128,22 +131,22 @@ def _row_to_memory(row: sqlite3.Row, *, tags: list[str] | None = None) -> Memory
         superseded_by=row["superseded_by"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
-        tags=tags if tags is not None else [],
+        tags=tags if tags is not None else (),
     )
 
 
-def _fetch_tags_for_memory(conn: sqlite3.Connection, memory_id: str) -> list[str]:
+def _fetch_tags_for_memory(conn: sqlite3.Connection, memory_id: str) -> tuple[str, ...]:
     """Return all tags for a given memory id."""
     rows = conn.execute(
         "SELECT tag FROM memory_tags WHERE memory_id = ? ORDER BY tag",
         (memory_id,),
     ).fetchall()
-    return [r["tag"] for r in rows]
+    return tuple(r["tag"] for r in rows)
 
 
 def _fetch_tags_for_memories(
     conn: sqlite3.Connection, memory_ids: list[str]
-) -> dict[str, list[str]]:
+) -> dict[str, tuple[str, ...]]:
     """Batch-fetch tags for multiple memory ids."""
     if not memory_ids:
         return {}
@@ -155,7 +158,7 @@ def _fetch_tags_for_memories(
     tags_map: dict[str, list[str]] = {}
     for r in rows:
         tags_map.setdefault(r["memory_id"], []).append(r["tag"])
-    return tags_map
+    return {mid: tuple(tags) for mid, tags in tags_map.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -172,9 +175,13 @@ class MuninnStore:
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
 
         # Initialise schema on first run.
-        with self._get_connection() as conn:
-            conn.executescript(_SCHEMA_SQL)
-            self._run_migrations(conn)
+        conn = self._get_connection()
+        try:
+            with conn:
+                conn.executescript(_SCHEMA_SQL)
+                self._run_migrations(conn)
+        finally:
+            conn.close()
 
     # ------------------------------------------------------------------
     # Connection
@@ -198,12 +205,12 @@ class MuninnStore:
         ).fetchone()
         current_version: int = row["v"] if row and row["v"] is not None else 0
 
-        # Future migrations go here as:
-        #   if current_version < 2:
-        #       conn.executescript(MIGRATION_V2_SQL)
-        #       conn.execute("INSERT INTO schema_version (version) VALUES (2)")
-
-        _ = current_version  # Suppress unused-variable lint.
+        if current_version < 2:
+            conn.executescript("""
+                CREATE INDEX IF NOT EXISTS idx_memories_project_id ON memories(project_id);
+                CREATE INDEX IF NOT EXISTS idx_memories_superseded_by ON memories(superseded_by);
+            """)
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (2)")
 
     # ------------------------------------------------------------------
     # Project operations
@@ -218,14 +225,18 @@ class MuninnStore:
     ) -> Project:
         """Insert a new project and return the created ``Project``."""
         now = _now_iso()
-        with self._get_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO projects (id, name, summary, github_repo, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (id, name, summary, github_repo, now, now),
-            )
+        conn = self._get_connection()
+        try:
+            with conn:
+                conn.execute(
+                    """
+                    INSERT INTO projects (id, name, summary, github_repo, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (id, name, summary, github_repo, now, now),
+                )
+        finally:
+            conn.close()
         return Project(
             id=id,
             name=name,
@@ -239,21 +250,25 @@ class MuninnStore:
 
     def get_project(self, id: str) -> Project | None:
         """Fetch a single project by *id*, or ``None`` if not found."""
-        with self._get_connection() as conn:
-            row = conn.execute(
-                "SELECT * FROM projects WHERE id = ?", (id,)
-            ).fetchone()
-            if row is None:
-                return None
+        conn = self._get_connection()
+        try:
+            with conn:
+                row = conn.execute(
+                    "SELECT * FROM projects WHERE id = ?", (id,)
+                ).fetchone()
+                if row is None:
+                    return None
 
-            count_row = conn.execute(
-                """
-                SELECT COUNT(*) AS cnt FROM memories
-                WHERE project_id = ? AND superseded_by IS NULL
-                """,
-                (id,),
-            ).fetchone()
-            memory_count = count_row["cnt"] if count_row else 0
+                count_row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS cnt FROM memories
+                    WHERE project_id = ? AND superseded_by IS NULL
+                    """,
+                    (id,),
+                ).fetchone()
+                memory_count = count_row["cnt"] if count_row else 0
+        finally:
+            conn.close()
 
         return _row_to_project(row, memory_count=memory_count)
 
@@ -263,29 +278,33 @@ class MuninnStore:
         Each returned ``Project`` includes the count of active (non-superseded)
         memories as ``memory_count``.
         """
-        with self._get_connection() as conn:
-            if status is not None:
-                rows = conn.execute(
-                    """
-                    SELECT p.*,
-                           (SELECT COUNT(*) FROM memories m
-                            WHERE m.project_id = p.id AND m.superseded_by IS NULL) AS memory_count
-                    FROM projects p
-                    WHERE p.status = ?
-                    ORDER BY p.updated_at DESC
-                    """,
-                    (status,),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """
-                    SELECT p.*,
-                           (SELECT COUNT(*) FROM memories m
-                            WHERE m.project_id = p.id AND m.superseded_by IS NULL) AS memory_count
-                    FROM projects p
-                    ORDER BY p.updated_at DESC
-                    """
-                ).fetchall()
+        conn = self._get_connection()
+        try:
+            with conn:
+                if status is not None:
+                    rows = conn.execute(
+                        """
+                        SELECT p.*,
+                               (SELECT COUNT(*) FROM memories m
+                                WHERE m.project_id = p.id AND m.superseded_by IS NULL) AS memory_count
+                        FROM projects p
+                        WHERE p.status = ?
+                        ORDER BY p.updated_at DESC
+                        """,
+                        (status,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        """
+                        SELECT p.*,
+                               (SELECT COUNT(*) FROM memories m
+                                WHERE m.project_id = p.id AND m.superseded_by IS NULL) AS memory_count
+                        FROM projects p
+                        ORDER BY p.updated_at DESC
+                        """
+                    ).fetchall()
+        finally:
+            conn.close()
 
         return [
             _row_to_project(r, memory_count=r["memory_count"]) for r in rows
@@ -302,7 +321,13 @@ class MuninnStore:
         Raises ``ValueError`` if the project does not exist.
         """
         allowed = {"name", "status", "summary", "github_repo"}
-        updates = {k: v for k, v in kwargs.items() if k in allowed}
+        unknown = set(kwargs.keys()) - allowed
+        if unknown:
+            raise ValueError(
+                f"Unknown fields: {sorted(unknown)}. "
+                f"Allowed: {sorted(allowed)}"
+            )
+        updates = dict(kwargs)
 
         if "status" in updates:
             from muninn.models import validate_project_status
@@ -314,13 +339,17 @@ class MuninnStore:
         set_clause = ", ".join(f"{col} = ?" for col in updates)
         values = list(updates.values()) + [id]
 
-        with self._get_connection() as conn:
-            cursor = conn.execute(
-                f"UPDATE projects SET {set_clause} WHERE id = ?",
-                values,
-            )
-            if cursor.rowcount == 0:
-                raise ValueError(f"Project {id!r} not found")
+        conn = self._get_connection()
+        try:
+            with conn:
+                cursor = conn.execute(
+                    f"UPDATE projects SET {set_clause} WHERE id = ?",
+                    values,
+                )
+                if cursor.rowcount == 0:
+                    raise ValueError(f"Project {id!r} not found")
+        finally:
+            conn.close()
 
         project = self.get_project(id)
         if project is None:
@@ -337,7 +366,7 @@ class MuninnStore:
         content: str,
         depth: int = 1,
         source: str = MemorySource.CONVERSATION,
-        tags: list[str] | None = None,
+        tags: list[str] | tuple[str, ...] | None = None,
     ) -> Memory:
         """Create a new memory and return it.
 
@@ -348,30 +377,35 @@ class MuninnStore:
 
         validate_memory_depth(depth)
         validate_memory_source(source)
+        validate_memory_content(content)
 
         memory_id = uuid.uuid4().hex
         now = _now_iso()
         tag_list = tags or []
 
-        with self._get_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO memories (id, project_id, content, depth, source, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (memory_id, project_id, content, depth, source, now, now),
-            )
-
-            for tag in tag_list:
+        conn = self._get_connection()
+        try:
+            with conn:
                 conn.execute(
-                    "INSERT INTO memory_tags (memory_id, tag) VALUES (?, ?)",
-                    (memory_id, tag),
+                    """
+                    INSERT INTO memories (id, project_id, content, depth, source, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (memory_id, project_id, content, depth, source, now, now),
                 )
 
-            conn.execute(
-                "UPDATE projects SET updated_at = ? WHERE id = ?",
-                (now, project_id),
-            )
+                for tag in tag_list:
+                    conn.execute(
+                        "INSERT INTO memory_tags (memory_id, tag) VALUES (?, ?)",
+                        (memory_id, tag),
+                    )
+
+                conn.execute(
+                    "UPDATE projects SET updated_at = ? WHERE id = ?",
+                    (now, project_id),
+                )
+        finally:
+            conn.close()
 
         return Memory(
             id=memory_id,
@@ -379,7 +413,7 @@ class MuninnStore:
             content=content,
             depth=depth,
             source=source,
-            tags=tag_list,
+            tags=tuple(tag_list),
             superseded_by=None,
             created_at=now,
             updated_at=now,
@@ -417,47 +451,51 @@ class MuninnStore:
         and stats is a dict with keys: chars_loaded, chars_budget,
         memories_loaded, memories_dropped.
         """
-        with self._get_connection() as conn:
-            # Determine which projects to load.
-            if project_id is not None:
-                project_ids = [project_id]
-            else:
-                rows = conn.execute(
-                    "SELECT id FROM projects WHERE status = 'active'"
-                ).fetchall()
-                project_ids = [r["id"] for r in rows]
+        conn = self._get_connection()
+        try:
+            with conn:
+                # Determine which projects to load.
+                if project_id is not None:
+                    project_ids = [project_id]
+                else:
+                    rows = conn.execute(
+                        "SELECT id FROM projects WHERE status = 'active'"
+                    ).fetchall()
+                    project_ids = [r["id"] for r in rows]
 
-            if not project_ids:
-                return {}, {"chars_loaded": 0, "chars_budget": max_chars, "memories_loaded": 0, "memories_dropped": 0}
+                if not project_ids:
+                    return {}, {"chars_loaded": 0, "chars_budget": max_chars, "memories_loaded": 0, "memories_dropped": 0}
 
-            placeholders = ",".join("?" for _ in project_ids)
+                placeholders = ",".join("?" for _ in project_ids)
 
-            # Base query.
-            query = f"""
-                SELECT * FROM memories
-                WHERE project_id IN ({placeholders})
-                  AND superseded_by IS NULL
-                  AND depth <= ?
-            """
-            params: list[object] = list(project_ids) + [depth]
+                # Base query.
+                query = f"""
+                    SELECT * FROM memories
+                    WHERE project_id IN ({placeholders})
+                      AND superseded_by IS NULL
+                      AND depth <= ?
+                """
+                params: list[object] = list(project_ids) + [depth]
 
-            # Tag filter: require ALL tags present.
-            if tags:
-                for tag in tags:
-                    query += """
-                        AND id IN (
-                            SELECT memory_id FROM memory_tags WHERE tag = ?
-                        )
-                    """
-                    params.append(tag)
+                # Tag filter: require ALL tags present.
+                if tags:
+                    for tag in tags:
+                        query += """
+                            AND id IN (
+                                SELECT memory_id FROM memory_tags WHERE tag = ?
+                            )
+                        """
+                        params.append(tag)
 
-            query += " ORDER BY depth ASC, updated_at DESC"
+                query += " ORDER BY depth ASC, updated_at DESC"
 
-            mem_rows = conn.execute(query, params).fetchall()
+                mem_rows = conn.execute(query, params).fetchall()
 
-            # Batch-fetch tags.
-            mem_ids = [r["id"] for r in mem_rows]
-            tags_map = _fetch_tags_for_memories(conn, mem_ids)
+                # Batch-fetch tags.
+                mem_ids = [r["id"] for r in mem_rows]
+                tags_map = _fetch_tags_for_memories(conn, mem_ids)
+        finally:
+            conn.close()
 
         # Accumulate within character budget.
         result: dict[str, list[Memory]] = {}
@@ -472,7 +510,7 @@ class MuninnStore:
                 continue  # count ALL dropped, don't break
             char_count += content_len
             loaded_count += 1
-            memory = _row_to_memory(r, tags=tags_map.get(r["id"], []))
+            memory = _row_to_memory(r, tags=tags_map.get(r["id"], ()))
             result.setdefault(memory.project_id, []).append(memory)
 
         stats = {
@@ -489,47 +527,54 @@ class MuninnStore:
         query: str,
         project_id: str | None = None,
         tags: list[str] | None = None,
+        limit: int = 50,
     ) -> list[Memory]:
         """Full-text search over non-superseded memories.
 
         Results are sorted by FTS5 relevance (``rank``), then ``updated_at``
         descending.
         """
-        with self._get_connection() as conn:
-            sql = """
-                SELECT m.*
-                FROM memories m
-                JOIN memories_fts f ON m.rowid = f.rowid
-                WHERE memories_fts MATCH ?
-                  AND m.superseded_by IS NULL
-            """
-            # Wrap query in double-quotes to treat it as a literal phrase
-            # and avoid FTS5 syntax errors from special characters.
-            safe_query = '"' + query.replace('"', '""') + '"'
-            params: list[object] = [safe_query]
+        conn = self._get_connection()
+        try:
+            with conn:
+                sql = """
+                    SELECT m.*
+                    FROM memories m
+                    JOIN memories_fts f ON m.rowid = f.rowid
+                    WHERE memories_fts MATCH ?
+                      AND m.superseded_by IS NULL
+                """
+                # Wrap query in double-quotes to treat it as a literal phrase
+                # and avoid FTS5 syntax errors from special characters.
+                safe_query = '"' + query.replace('"', '""') + '"'
+                params: list[object] = [safe_query]
 
-            if project_id is not None:
-                sql += " AND m.project_id = ?"
-                params.append(project_id)
+                if project_id is not None:
+                    sql += " AND m.project_id = ?"
+                    params.append(project_id)
 
-            if tags:
-                for tag in tags:
-                    sql += """
-                        AND m.id IN (
-                            SELECT memory_id FROM memory_tags WHERE tag = ?
-                        )
-                    """
-                    params.append(tag)
+                if tags:
+                    for tag in tags:
+                        sql += """
+                            AND m.id IN (
+                                SELECT memory_id FROM memory_tags WHERE tag = ?
+                            )
+                        """
+                        params.append(tag)
 
-            sql += " ORDER BY f.rank, m.updated_at DESC"
+                sql += " ORDER BY f.rank, m.updated_at DESC"
+                sql += " LIMIT ?"
+                params.append(limit)
 
-            rows = conn.execute(sql, params).fetchall()
+                rows = conn.execute(sql, params).fetchall()
 
-            mem_ids = [r["id"] for r in rows]
-            tags_map = _fetch_tags_for_memories(conn, mem_ids)
+                mem_ids = [r["id"] for r in rows]
+                tags_map = _fetch_tags_for_memories(conn, mem_ids)
+        finally:
+            conn.close()
 
         return [
-            _row_to_memory(r, tags=tags_map.get(r["id"], []))
+            _row_to_memory(r, tags=tags_map.get(r["id"], ()))
             for r in rows
         ]
 
@@ -547,10 +592,11 @@ class MuninnStore:
         if row is not None:
             return row["id"]
 
-        # Prefix match.
+        # Prefix match — escape LIKE metacharacters to prevent logic injection.
+        escaped = memory_id.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         rows = conn.execute(
-            "SELECT id FROM memories WHERE id LIKE ?",
-            (memory_id + "%",),
+            "SELECT id FROM memories WHERE id LIKE ? ESCAPE '\\'",
+            (escaped + "%",),
         ).fetchall()
         if len(rows) == 1:
             return rows[0]["id"]
@@ -563,18 +609,22 @@ class MuninnStore:
         Returns ``True`` if the memory existed and was updated.
         """
         now = _now_iso()
-        with self._get_connection() as conn:
-            resolved = self._resolve_memory_id(conn, memory_id)
-            if resolved is None:
-                return False
-            cursor = conn.execute(
-                """
-                UPDATE memories
-                SET superseded_by = '_deleted', updated_at = ?
-                WHERE id = ? AND superseded_by IS NULL
-                """,
-                (now, resolved),
-            )
+        conn = self._get_connection()
+        try:
+            with conn:
+                resolved = self._resolve_memory_id(conn, memory_id)
+                if resolved is None:
+                    return False
+                cursor = conn.execute(
+                    """
+                    UPDATE memories
+                    SET superseded_by = '_deleted', updated_at = ?
+                    WHERE id = ? AND superseded_by IS NULL
+                    """,
+                    (now, resolved),
+                )
+        finally:
+            conn.close()
         return cursor.rowcount > 0
 
     def update_memory(
@@ -582,7 +632,7 @@ class MuninnStore:
         memory_id: str,
         content: str | None = None,
         depth: int | None = None,
-        tags: list[str] | None = None,
+        tags: list[str] | tuple[str, ...] | None = None,
     ) -> "Memory | None":
         """Update an existing memory's content, depth, and/or tags.
 
@@ -591,61 +641,66 @@ class MuninnStore:
         or None if the memory was not found or is superseded.
         """
         now = _now_iso()
-        with self._get_connection() as conn:
-            # Resolve prefix to full ID
-            resolved = self._resolve_memory_id(conn, memory_id)
-            if resolved is None:
-                return None
-            memory_id = resolved
+        conn = self._get_connection()
+        try:
+            with conn:
+                # Resolve prefix to full ID
+                resolved = self._resolve_memory_id(conn, memory_id)
+                if resolved is None:
+                    return None
+                memory_id = resolved
 
-            # Check memory exists and is not superseded
-            row = conn.execute(
-                "SELECT * FROM memories WHERE id = ? AND superseded_by IS NULL",
-                (memory_id,),
-            ).fetchone()
-            if row is None:
-                return None
-
-            # Build update SET clause
-            updates: dict[str, object] = {"updated_at": now}
-            if content is not None:
-                updates["content"] = content
-            if depth is not None:
-                from muninn.models import validate_memory_depth
-                validate_memory_depth(depth)
-                updates["depth"] = depth
-
-            set_clause = ", ".join(f"{col} = ?" for col in updates)
-            values = list(updates.values()) + [memory_id]
-            conn.execute(
-                f"UPDATE memories SET {set_clause} WHERE id = ?",
-                values,
-            )
-
-            # Update tags if provided
-            if tags is not None:
-                conn.execute(
-                    "DELETE FROM memory_tags WHERE memory_id = ?",
+                # Check memory exists and is not superseded
+                row = conn.execute(
+                    "SELECT * FROM memories WHERE id = ? AND superseded_by IS NULL",
                     (memory_id,),
+                ).fetchone()
+                if row is None:
+                    return None
+
+                # Build update SET clause
+                updates: dict[str, object] = {"updated_at": now}
+                if content is not None:
+                    validate_memory_content(content)
+                    updates["content"] = content
+                if depth is not None:
+                    from muninn.models import validate_memory_depth
+                    validate_memory_depth(depth)
+                    updates["depth"] = depth
+
+                set_clause = ", ".join(f"{col} = ?" for col in updates)
+                values = list(updates.values()) + [memory_id]
+                conn.execute(
+                    f"UPDATE memories SET {set_clause} WHERE id = ?",
+                    values,
                 )
-                for tag in tags:
+
+                # Update tags if provided
+                if tags is not None:
                     conn.execute(
-                        "INSERT INTO memory_tags (memory_id, tag) VALUES (?, ?)",
-                        (memory_id, tag),
+                        "DELETE FROM memory_tags WHERE memory_id = ?",
+                        (memory_id,),
                     )
+                    for tag in tags:
+                        conn.execute(
+                            "INSERT INTO memory_tags (memory_id, tag) VALUES (?, ?)",
+                            (memory_id, tag),
+                        )
 
-            # Bump project updated_at
-            conn.execute(
-                "UPDATE projects SET updated_at = ? WHERE id = ?",
-                (now, row["project_id"]),
-            )
+                # Bump project updated_at
+                conn.execute(
+                    "UPDATE projects SET updated_at = ? WHERE id = ?",
+                    (now, row["project_id"]),
+                )
 
-            # Re-fetch to get final state
-            updated_row = conn.execute(
-                "SELECT * FROM memories WHERE id = ?",
-                (memory_id,),
-            ).fetchone()
-            final_tags = _fetch_tags_for_memory(conn, memory_id)
+                # Re-fetch to get final state
+                updated_row = conn.execute(
+                    "SELECT * FROM memories WHERE id = ?",
+                    (memory_id,),
+                ).fetchone()
+                final_tags = _fetch_tags_for_memory(conn, memory_id)
+        finally:
+            conn.close()
 
         return _row_to_memory(updated_row, tags=final_tags)
 
@@ -655,13 +710,17 @@ class MuninnStore:
         Returns ``True`` if the old memory existed and was updated.
         """
         now = _now_iso()
-        with self._get_connection() as conn:
-            cursor = conn.execute(
-                """
-                UPDATE memories
-                SET superseded_by = ?, updated_at = ?
-                WHERE id = ? AND superseded_by IS NULL
-                """,
-                (new_id, now, old_id),
-            )
+        conn = self._get_connection()
+        try:
+            with conn:
+                cursor = conn.execute(
+                    """
+                    UPDATE memories
+                    SET superseded_by = ?, updated_at = ?
+                    WHERE id = ? AND superseded_by IS NULL
+                    """,
+                    (new_id, now, old_id),
+                )
+        finally:
+            conn.close()
         return cursor.rowcount > 0

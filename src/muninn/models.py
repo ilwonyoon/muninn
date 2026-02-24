@@ -72,6 +72,12 @@ def validate_memory_source(source: str) -> None:
         )
 
 
+def validate_memory_content(content: str) -> None:
+    """Raise ValueError if *content* is empty or whitespace-only."""
+    if not content or not content.strip():
+        raise ValueError("Memory content must not be empty or whitespace-only.")
+
+
 # ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------
@@ -105,9 +111,12 @@ class Memory:
     updated_at: str
     depth: int = 1
     source: str = MemorySource.CONVERSATION
-    tags: list[str] = field(default_factory=list)
+    tags: tuple[str, ...] = field(default_factory=tuple)
     superseded_by: str | None = None
 
     def __post_init__(self) -> None:
         validate_memory_depth(self.depth)
         validate_memory_source(self.source)
+        for tag in self.tags:
+            if not tag or not tag.strip():
+                raise ValueError("Tags must be non-empty strings.")

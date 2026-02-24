@@ -48,7 +48,7 @@ def muninn_save(
     project: str,
     content: str,
     depth: int = 1,
-    tags: list[str] | None = None,
+    tags: tuple[str, ...] | list[str] | None = None,
 ) -> str:
     """Save important information to a project's memory.
 
@@ -150,6 +150,7 @@ def muninn_search(
     query: str,
     project: str | None = None,
     tags: list[str] | None = None,
+    limit: int = 50,
 ) -> str:
     """Search across all project memories by keyword.
 
@@ -163,6 +164,7 @@ def muninn_search(
             query=query,
             project_id=project,
             tags=tags,
+            limit=limit,
         )
 
         return format_search_results(memories, query)

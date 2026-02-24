@@ -720,3 +720,197 @@ class TestConcurrentWrites:
         project = final_store.get_project("shared-proj")
         assert project is not None
         assert project.memory_count == 20
+
+
+# ---------------------------------------------------------------------------
+# Edge cases: Content validation
+# ---------------------------------------------------------------------------
+
+class TestContentValidation:
+    def test_save_empty_content_raises(self, store):
+        """save_memory raises ValueError for empty content."""
+        _make_project(store)
+        with pytest.raises(ValueError, match="empty"):
+            store.save_memory(project_id="proj-1", content="")
+
+    def test_save_whitespace_only_content_raises(self, store):
+        """save_memory raises ValueError for whitespace-only content."""
+        _make_project(store)
+        with pytest.raises(ValueError, match="empty"):
+            store.save_memory(project_id="proj-1", content="   \n\t  ")
+
+    def test_update_memory_empty_content_raises(self, store):
+        """update_memory raises ValueError for empty content."""
+        _make_project(store)
+        mem = _save_memory(store, content="Valid content")
+        with pytest.raises(ValueError, match="empty"):
+            store.update_memory(mem.id, content="")
+
+    def test_update_memory_whitespace_content_raises(self, store):
+        """update_memory raises ValueError for whitespace-only content."""
+        _make_project(store)
+        mem = _save_memory(store, content="Valid content")
+        with pytest.raises(ValueError, match="empty"):
+            store.update_memory(mem.id, content="   ")
+
+
+# ---------------------------------------------------------------------------
+# Edge cases: Tag validation
+# ---------------------------------------------------------------------------
+
+class TestTagValidation:
+    def test_save_memory_empty_tag_raises(self, store):
+        """save_memory with an empty-string tag raises ValueError."""
+        _make_project(store)
+        with pytest.raises(ValueError, match="non-empty"):
+            store.save_memory(project_id="proj-1", content="Tagged", tags=[""])
+
+    def test_save_memory_whitespace_tag_raises(self, store):
+        """save_memory with a whitespace-only tag raises ValueError."""
+        _make_project(store)
+        with pytest.raises(ValueError, match="non-empty"):
+            store.save_memory(project_id="proj-1", content="Tagged", tags=["   "])
+
+    def test_memory_tags_are_tuples(self, store):
+        """Memory.tags should be a tuple, not a list."""
+        _make_project(store)
+        mem = store.save_memory(project_id="proj-1", content="Tuple tags", tags=["a", "b"])
+        assert isinstance(mem.tags, tuple)
+
+    def test_recalled_memory_tags_are_tuples(self, store):
+        """Tags returned from recall are tuples."""
+        _make_project(store)
+        store.save_memory(project_id="proj-1", content="Recall tuple", tags=["x"])
+        result, _ = store.recall(project_id="proj-1")
+        for mems in result.values():
+            for mem in mems:
+                assert isinstance(mem.tags, tuple)
+
+
+# ---------------------------------------------------------------------------
+# Edge cases: Duplicate project ID
+# ---------------------------------------------------------------------------
+
+class TestDuplicateProject:
+    def test_create_duplicate_project_raises(self, store):
+        """Creating a project with an existing ID raises an error."""
+        store.create_project(id="dup-proj", name="First")
+        with pytest.raises(Exception):
+            store.create_project(id="dup-proj", name="Second")
+
+
+# ---------------------------------------------------------------------------
+# Edge cases: Unicode content
+# ---------------------------------------------------------------------------
+
+class TestUnicodeSupport:
+    def test_save_and_recall_korean(self, store):
+        """Korean text is saved and recalled correctly."""
+        _make_project(store)
+        store.save_memory(project_id="proj-1", content="한국어 메모리 테스트")
+        result, _ = store.recall(project_id="proj-1")
+        memories = result.get("proj-1", [])
+        assert any("한국어" in m.content for m in memories)
+
+    def test_save_and_recall_emoji(self, store):
+        """Emoji content is saved and recalled correctly."""
+        _make_project(store)
+        store.save_memory(project_id="proj-1", content="🚀 Launch day! 🎉")
+        result, _ = store.recall(project_id="proj-1")
+        memories = result.get("proj-1", [])
+        assert any("🚀" in m.content for m in memories)
+
+    def test_search_korean(self, store):
+        """FTS search works with Korean text."""
+        _make_project(store)
+        store.save_memory(project_id="proj-1", content="음성 저널링 앱 개발")
+        results = store.search("저널링")
+        assert len(results) >= 1
+
+    def test_unicode_tags(self, store):
+        """Unicode characters work in tags."""
+        _make_project(store)
+        mem = store.save_memory(project_id="proj-1", content="Unicode tagged", tags=["개발", "テスト"])
+        assert "개발" in mem.tags
+        assert "テスト" in mem.tags
+
+
+# ---------------------------------------------------------------------------
+# Edge cases: Search LIMIT
+# ---------------------------------------------------------------------------
+
+class TestSearchLimit:
+    def test_search_respects_limit(self, store):
+        """search() returns at most `limit` results."""
+        _make_project(store)
+        for i in range(20):
+            store.save_memory(project_id="proj-1", content=f"searchable item number {i}")
+
+        results = store.search("searchable", limit=5)
+        assert len(results) <= 5
+
+    def test_search_default_limit_is_50(self, store):
+        """search() default limit allows up to 50 results."""
+        _make_project(store)
+        for i in range(60):
+            store.save_memory(project_id="proj-1", content=f"findme entry {i}")
+
+        results = store.search("findme")
+        assert len(results) <= 50
+
+
+# ---------------------------------------------------------------------------
+# Edge cases: LIKE wildcard escaping in prefix matching
+# ---------------------------------------------------------------------------
+
+class TestLikeWildcardEscaping:
+    def test_percent_in_prefix_does_not_match_all(self, store):
+        """A memory_id containing '%' should not match everything."""
+        _make_project(store)
+        _save_memory(store, content="Should not be found")
+        # '%' as prefix should match nothing (no ID starts with literal %)
+        result = store.delete_memory("%")
+        assert result is False
+
+    def test_underscore_in_prefix_does_not_wildcard(self, store):
+        """A memory_id containing '_' should not act as single-char wildcard."""
+        _make_project(store)
+        _save_memory(store, content="Not a wildcard match")
+        result = store.delete_memory("_")
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Edge cases: Recall on non-existent project
+# ---------------------------------------------------------------------------
+
+class TestRecallNonExistentProject:
+    def test_recall_nonexistent_project_returns_empty(self, store):
+        """Recall with a non-existent project_id returns empty dict."""
+        result, stats = store.recall(project_id="no-such-project")
+        assert result == {}
+        assert stats["memories_loaded"] == 0
+
+    def test_recall_nonexistent_project_stats_zeroed(self, store):
+        """Stats are all zero for a non-existent project recall."""
+        _, stats = store.recall(project_id="no-such-project")
+        assert stats["chars_loaded"] == 0
+        assert stats["memories_dropped"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Edge cases: Unknown kwargs in update_project
+# ---------------------------------------------------------------------------
+
+class TestUpdateProjectUnknownKwargs:
+    def test_unknown_kwargs_raises_valueerror(self, store):
+        """update_project with unknown field names raises ValueError."""
+        store.create_project(id="kwargs-test", name="KW Test")
+        with pytest.raises(ValueError, match="Unknown"):
+            store.update_project("kwargs-test", nonexistent_field="value")
+
+    def test_typo_field_raises_valueerror(self, store):
+        """update_project with a typo'd field name raises ValueError."""
+        store.create_project(id="typo-test", name="Typo Test")
+        with pytest.raises(ValueError, match="Unknown"):
+            store.update_project("typo-test", summry="oops")
