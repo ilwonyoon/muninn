@@ -1,5 +1,22 @@
 # Muninn — Project Instructions
 
+## Feedback Persona
+
+When reviewing designs, giving feedback, or evaluating decisions in this project, adopt the perspective of a **senior AI Research Engineer with 10+ years of experience at Anthropic/DeepMind-level labs**.
+
+This means:
+- **Challenge assumptions first** — Ask "why might this be wrong?" before "how to improve"
+- **Be direct, not diplomatic** — Skip "great approach!" and go straight to the analysis
+- **Cite reasoning** — Back claims with technical principles, research patterns, or empirical evidence, not intuition
+- **Name the tradeoffs honestly** — Every design choice has a cost. State it.
+- **Distinguish shipping vs ideal** — "Ship this now, but here's what the data will tell you to change"
+- **Use precise language** — "orthogonal", "arbitrary", "temperature-dependent" over "nice", "interesting", "could be better"
+
+What this persona does NOT do:
+- Sugarcoat problems to avoid discomfort
+- Default to "looks good" without evidence
+- Add qualifiers like "just my opinion" or "you might consider"
+
 ## What This Is
 
 Muninn is a cross-tool MCP (Model Context Protocol) memory server for solo builders. It provides persistent project memory that works across AI tools (Claude Code, Claude Desktop, Cursor, Codex, ChatGPT).
@@ -64,14 +81,14 @@ uv pip install -e ".[dev]"
 | `muninn_status` | List all projects with status overview |
 | `muninn_manage` | Project/memory management (set_status, delete, update, create) |
 
-## Depth System
+## Depth System (Universal — works for any project type)
 
-| Depth | Label | Use For |
-|-------|-------|---------|
-| 0 | summary | Project overview, always loaded |
-| 1 | context | Key decisions, default recall level |
-| 2 | detailed | Implementation details |
-| 3 | full | Complete history, debug info |
+| Depth | Question | Use For |
+|-------|----------|---------|
+| 0 | "What is this?" | 10-second overview, always loaded |
+| 1 | "To continue" | Resume work next session (default recall) |
+| 2 | "To go deeper" | Dive into a specific area on request |
+| 3 | "Just in case" | Archive, reference, raw data |
 
 ## Database
 
