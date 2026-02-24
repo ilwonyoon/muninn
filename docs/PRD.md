@@ -4,8 +4,8 @@
 
 > "Odin feared losing Muninn more than Huginn — losing memory is worse than losing thought."
 
-**Last updated:** 2026-02-23
-**Status:** Phase 1 — Pre-implementation
+**Last updated:** 2026-02-24
+**Status:** Phase 1 — Complete ✅ | Phase 2 — Not started
 **Author:** Ilwon Yoon
 
 ---
@@ -483,7 +483,7 @@ CREATE TABLE memories (
         CHECK(depth BETWEEN 0 AND 3),      -- 0=summary, 1=context, 2=detailed, 3=full
     source TEXT DEFAULT 'conversation'
         CHECK(source IN ('conversation', 'github', 'manual')),
-    superseded_by TEXT REFERENCES memories(id),  -- soft delete chain
+    superseded_by TEXT,                          -- soft delete chain (no FK: uses '_deleted' sentinel)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -648,7 +648,7 @@ muninn/
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| action | string | yes | — | "set_status" / "delete_memory" / "update_project" / "create_project" |
+| action | string | yes | — | "set_status" / "delete_memory" / "update_memory" / "update_project" / "create_project" |
 | project | string | yes | — | Project ID |
 | status | string | conditional | — | For set_status: "active" / "paused" / "idea" / "archived" |
 | memory_id | string | conditional | — | For delete_memory |
@@ -762,30 +762,41 @@ Instead of hard delete, old memories point to their replacement via `superseded_
 **Scope:** Phase 1 supports **stdio transport** — Claude Desktop, Claude Code, Cursor, and Codex. Claude Desktop already supports stdio MCP servers, so the core use case ("brainstorm in Claude Desktop → code in Claude Code with full context") works from day 1. Claude Web/Mobile and ChatGPT require Streamable HTTP (Phase 2).
 
 **Day 1 (~5 hours):**
-- [ ] Project scaffolding: git init, pyproject.toml, directory structure, .gitignore
-- [ ] models.py — Project, Memory dataclasses
-- [ ] store.py — SQLite init (WAL mode, busy_timeout), CRUD, FTS5 with sync triggers, schema migration
-- [ ] tools.py — muninn_save, muninn_recall, muninn_search, muninn_status, muninn_manage
-- [ ] server.py — FastMCP stdio server entry point
-- [ ] test_store.py — CRUD operations, FTS sync, concurrent access, supersede chain
-- [ ] Smoke test: save a memory, recall it from Claude Code
+- [x] Project scaffolding: git init, pyproject.toml, directory structure, .gitignore
+- [x] models.py — Project, Memory dataclasses
+- [x] store.py — SQLite init (WAL mode, busy_timeout), CRUD, FTS5 with sync triggers, schema migration
+- [x] tools.py — muninn_save, muninn_recall, muninn_search, muninn_status, muninn_manage
+- [x] server.py — FastMCP stdio server entry point
+- [x] test_store.py — CRUD operations, FTS sync, concurrent access, supersede chain
+- [x] Smoke test: save a memory, recall it from Claude Code
 
 **Day 2 (~5 hours):**
-- [ ] formatter.py — depth-aware memory formatting for LLM context
-- [ ] Project status filtering in recall (active only by default)
-- [ ] Character budget truncation in recall
-- [ ] test_tools.py — tool parameter validation, edge cases
-- [ ] Seed data: register own projects
+- [x] formatter.py — depth-aware memory formatting for LLM context
+- [x] Project status filtering in recall (active only by default)
+- [x] Character budget truncation in recall
+- [x] test_tools.py — tool parameter validation, edge cases
+- [x] Seed data: register own projects (ouri-app via Claude Desktop)
 - [ ] pyproject.toml finalize + local `uvx` test
-- [ ] CLAUDE.md for the project itself
-- [ ] Begin dogfooding
+- [x] CLAUDE.md for the project itself
+- [x] Begin dogfooding
 
-**Realistic estimate:** ~10-12 hours total (not 8). Still a weekend, but a full one.
+**Post-MVP iteration (same weekend):**
+- [x] Depth guidance in tool docstrings + server instructions
+- [x] Universal depth semantics ("What is this?" / "To continue" / "To go deeper" / "Just in case")
+- [x] `update_memory` action in muninn_manage
+- [x] Character usage stats in recall response footer
+- [x] `Literal[...]` enum for action parameter (Claude Desktop couldn't discover actions without it)
+- [x] Memory IDs in recall/search output (needed for delete/update)
+- [x] Prefix ID matching in delete_memory/update_memory (short IDs from save now work)
+- [x] 87 tests passing
 
-**Success criteria:**
-- `muninn_recall("aido")` returns useful context in Claude Code without any copy-paste
-- `muninn_search("gamification")` finds relevant memories across projects
-- Save in Claude Desktop → recall in Claude Code works seamlessly
+**Actual time:** ~8 hours across 2 days. Faster than estimated due to AI-assisted implementation.
+
+**Success criteria — all met:**
+- ✅ `muninn_recall("ouri-app")` returns useful context in Claude Desktop without any copy-paste
+- ✅ `muninn_search(...)` finds relevant memories across projects via FTS5
+- ✅ Save in Claude Desktop → recall with full depth hierarchy works seamlessly
+- ✅ Delete and update memories via short IDs from Claude Desktop
 
 ### Phase 2: GitHub + Streamable HTTP + Polish (Week 2-3)
 
@@ -1120,6 +1131,24 @@ Decisions made during design phase. Each entry records the debate and rationale.
 ---
 
 ## 17. Changelog
+
+### 2026-02-24 — Phase 1 Complete (v0.5)
+
+- **Phase 1 marked complete** — all MVP features implemented and tested
+- **6 commits**, 1,376 lines source + 1,126 lines tests, 87 tests passing
+- **Post-MVP iteration** added during dogfooding:
+  - Depth guidance in docstrings (Claude was ignoring depth without it)
+  - Universal depth semantics (works for any project type, not just apps)
+  - `update_memory` action added to `muninn_manage`
+  - Character usage stats footer in recall output
+  - `Literal[...]` enum on action parameter (critical for Claude Desktop discovery)
+  - Memory IDs shown in recall/search output
+  - Prefix ID matching for delete/update (6-8 char short IDs work)
+- **Schema fix**: removed FK on `superseded_by` (incompatible with `'_deleted'` sentinel)
+- **Key learning**: LLM tool use depends heavily on JSON schema quality. `str` → `Literal[...]` was the difference between Claude Desktop using or ignoring actions
+- **Updated manage tool spec** to include `update_memory` action
+- **Claude Desktop verified**: save, recall, search, status, delete, update all working
+- **MCP platform compatibility table** researched: Claude iOS/Web need HTTP transport (Phase 2), ChatGPT Mac app has no MCP support yet
 
 ### 2026-02-23 — Success Scenarios & Testing Strategy (v0.4)
 
