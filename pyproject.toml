@@ -1,0 +1,38 @@
+[project]
+name = "muninn-mcp"
+version = "0.1.0"
+description = "Cross-tool project memory for solo builders. Odin's raven remembers."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+authors = [
+    {name = "Ilwon Yoon"}
+]
+keywords = ["mcp", "memory", "ai", "context", "llm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "mcp>=1.25,<2",
+]
+
+[project.optional-dependencies]
+github = ["pygithub>=2.0.0"]
+dev = ["pytest>=8.0", "pytest-anyio>=0.0.0"]
+
+[project.scripts]
+muninn = "muninn.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/muninn"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
