@@ -20,6 +20,11 @@ dependencies = [
     "mcp>=1.25,<2",
 ]
 
+[project.urls]
+Homepage = "https://github.com/ilwonyoon/muninn"
+Repository = "https://github.com/ilwonyoon/muninn"
+Issues = "https://github.com/ilwonyoon/muninn/issues"
+
 [project.optional-dependencies]
 http = ["uvicorn>=0.30.0", "starlette>=0.38.0"]
 github = ["pygithub>=2.0.0"]
