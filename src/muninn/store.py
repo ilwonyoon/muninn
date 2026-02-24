@@ -391,7 +391,7 @@ class MuninnStore:
         depth: int = 1,
         max_chars: int = 8000,
         tags: list[str] | None = None,
-    ) -> dict[str, list[Memory]]:
+    ) -> tuple[dict[str, list[Memory]], dict[str, int]]:
         """Load memories grouped by project, respecting a character budget.
 
         Parameters
@@ -412,8 +412,10 @@ class MuninnStore:
 
         Returns
         -------
-        dict mapping project_id to its list of memories (ordered
-        depth ASC, updated_at DESC).
+        Tuple of (memories_by_project, stats) where memories_by_project maps
+        project_id to its list of memories (ordered depth ASC, updated_at DESC)
+        and stats is a dict with keys: chars_loaded, chars_budget,
+        memories_loaded, memories_dropped.
         """
         with self._get_connection() as conn:
             # Determine which projects to load.
@@ -426,7 +428,7 @@ class MuninnStore:
                 project_ids = [r["id"] for r in rows]
 
             if not project_ids:
-                return {}
+                return {}, {"chars_loaded": 0, "chars_budget": max_chars, "memories_loaded": 0, "memories_dropped": 0}
 
             placeholders = ",".join("?" for _ in project_ids)
 
@@ -460,16 +462,27 @@ class MuninnStore:
         # Accumulate within character budget.
         result: dict[str, list[Memory]] = {}
         char_count = 0
+        loaded_count = 0
+        dropped_count = 0
 
         for r in mem_rows:
             content_len = len(r["content"])
             if char_count + content_len > max_chars:
-                break
+                dropped_count += 1
+                continue  # count ALL dropped, don't break
             char_count += content_len
+            loaded_count += 1
             memory = _row_to_memory(r, tags=tags_map.get(r["id"], []))
             result.setdefault(memory.project_id, []).append(memory)
 
-        return result
+        stats = {
+            "chars_loaded": char_count,
+            "chars_budget": max_chars,
+            "memories_loaded": loaded_count,
+            "memories_dropped": dropped_count,
+        }
+
+        return result, stats
 
     def search(
         self,
@@ -536,6 +549,71 @@ class MuninnStore:
                 (now, memory_id),
             )
         return cursor.rowcount > 0
+
+    def update_memory(
+        self,
+        memory_id: str,
+        content: str | None = None,
+        depth: int | None = None,
+        tags: list[str] | None = None,
+    ) -> "Memory | None":
+        """Update an existing memory's content, depth, and/or tags.
+
+        Only non-None parameters are updated. Returns the updated Memory,
+        or None if the memory was not found or is superseded.
+        """
+        now = _now_iso()
+        with self._get_connection() as conn:
+            # Check memory exists and is not superseded
+            row = conn.execute(
+                "SELECT * FROM memories WHERE id = ? AND superseded_by IS NULL",
+                (memory_id,),
+            ).fetchone()
+            if row is None:
+                return None
+
+            # Build update SET clause
+            updates: dict[str, object] = {"updated_at": now}
+            if content is not None:
+                updates["content"] = content
+            if depth is not None:
+                from muninn.models import validate_memory_depth
+                validate_memory_depth(depth)
+                updates["depth"] = depth
+
+            set_clause = ", ".join(f"{col} = ?" for col in updates)
+            values = list(updates.values()) + [memory_id]
+            conn.execute(
+                f"UPDATE memories SET {set_clause} WHERE id = ?",
+                values,
+            )
+
+            # Update tags if provided
+            if tags is not None:
+                conn.execute(
+                    "DELETE FROM memory_tags WHERE memory_id = ?",
+                    (memory_id,),
+                )
+                for tag in tags:
+                    conn.execute(
+                        "INSERT INTO memory_tags (memory_id, tag) VALUES (?, ?)",
+                        (memory_id, tag),
+                    )
+
+            # Bump project updated_at
+            conn.execute(
+                "UPDATE projects SET updated_at = ? WHERE id = ?",
+                (now, row["project_id"]),
+            )
+
+            # Re-fetch to get final state
+            updated_row = conn.execute(
+                "SELECT * FROM memories WHERE id = ?",
+                (memory_id,),
+            ).fetchone()
+            final_tags = _fetch_tags_for_memory(conn, memory_id)
+
+        return _row_to_memory(updated_row, tags=final_tags)
 
     def supersede_memory(self, old_id: str, new_id: str) -> bool:
         """Mark the old memory as superseded by the new memory.

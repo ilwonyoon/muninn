@@ -86,11 +86,17 @@ def _is_stale(updated_at: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def format_recall(projects_memories: dict[str, tuple[Project, list[Memory]]]) -> str:
+def format_recall(
+    projects_memories: dict[str, tuple[Project, list[Memory]]],
+    stats: dict[str, int] | None = None,
+) -> str:
     """Format recall output for LLM consumption.
 
     Args:
         projects_memories: Mapping of project_id to (Project, list[Memory]).
+        stats: Optional dict with keys chars_loaded, chars_budget,
+            memories_loaded, memories_dropped. When provided, a footer
+            summarising character and memory usage is appended.
 
     Returns:
         Plain-text string suitable for LLM context injection.
@@ -126,6 +132,17 @@ def format_recall(projects_memories: dict[str, tuple[Project, list[Memory]]]) ->
                     lines.append(f"  tags: {', '.join(mem.tags)}")
 
         sections.append("\n".join(lines))
+
+    # Add stats footer if available.
+    if stats is not None:
+        chars = stats.get("chars_loaded", 0)
+        budget = stats.get("chars_budget", 0)
+        loaded = stats.get("memories_loaded", 0)
+        dropped = stats.get("memories_dropped", 0)
+        footer = f"\n---\n📊 Context: {chars:,} / {budget:,} chars | {loaded} memories loaded"
+        if dropped > 0:
+            footer += f" | {dropped} dropped (budget exceeded)"
+        sections.append(footer)
 
     return "\n\n".join(sections)
 

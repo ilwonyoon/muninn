@@ -264,7 +264,7 @@ class TestRecall:
         store.save_memory(project_id="proj-a", content="Memory A")
         store.save_memory(project_id="proj-b", content="Memory B")
 
-        result = store.recall(project_id="proj-a")
+        result, stats = store.recall(project_id="proj-a")
 
         assert "proj-a" in result
         assert "proj-b" not in result
@@ -278,7 +278,7 @@ class TestRecall:
         store.save_memory(project_id="proj-a", content="A mem")
         store.save_memory(project_id="proj-b", content="B mem")
 
-        result = store.recall()
+        result, stats = store.recall()
 
         assert "proj-a" in result
         assert "proj-b" in result
@@ -291,7 +291,7 @@ class TestRecall:
         store.save_memory(project_id="proj-active", content="Active mem")
         store.save_memory(project_id="proj-paused", content="Paused mem")
 
-        result = store.recall()
+        result, stats = store.recall()
 
         assert "proj-active" in result
         assert "proj-paused" not in result
@@ -304,7 +304,7 @@ class TestRecall:
         store.save_memory(project_id="proj-1", content="Depth 2", depth=2)
         store.save_memory(project_id="proj-1", content="Depth 3", depth=3)
 
-        result = store.recall(project_id="proj-1", depth=1)
+        result, stats = store.recall(project_id="proj-1", depth=1)
 
         contents = [m.content for m in result.get("proj-1", [])]
         assert "Depth 0" in contents
@@ -319,11 +319,12 @@ class TestRecall:
         for i in range(10):
             store.save_memory(project_id="proj-1", content="A" * 50, depth=1)
 
-        result = store.recall(project_id="proj-1", depth=1, max_chars=100)
+        result, stats = store.recall(project_id="proj-1", depth=1, max_chars=100)
 
         # Should return at most 2 memories (100 / 50 = 2).
         memories = result.get("proj-1", [])
         assert len(memories) <= 2
+        assert stats["memories_dropped"] > 0
 
     def test_recall_tag_filter(self, store):
         """Only memories with all requested tags are returned."""
@@ -332,7 +333,7 @@ class TestRecall:
         store.save_memory(project_id="proj-1", content="Only auth", tags=["auth"])
         store.save_memory(project_id="proj-1", content="No tags")
 
-        result = store.recall(project_id="proj-1", depth=3, tags=["auth", "security"])
+        result, stats = store.recall(project_id="proj-1", depth=3, tags=["auth", "security"])
 
         memories = result.get("proj-1", [])
         assert len(memories) == 1
@@ -345,7 +346,7 @@ class TestRecall:
         new = store.save_memory(project_id="proj-1", content="New memory")
         store.supersede_memory(old.id, new.id)
 
-        result = store.recall(project_id="proj-1", depth=3)
+        result, stats = store.recall(project_id="proj-1", depth=3)
 
         memories = result.get("proj-1", [])
         contents = [m.content for m in memories]
@@ -359,7 +360,7 @@ class TestRecall:
         store.save_memory(project_id="proj-1", content="D1 later", depth=1)
         store.save_memory(project_id="proj-1", content="D1 earliest", depth=1)
 
-        result = store.recall(project_id="proj-1", depth=3, max_chars=99999)
+        result, stats = store.recall(project_id="proj-1", depth=3, max_chars=99999)
 
         memories = result.get("proj-1", [])
         depths = [m.depth for m in memories]
@@ -447,7 +448,7 @@ class TestDeleteMemory:
 
         assert result is True
         # Verify via recall: the deleted memory should not appear.
-        recalled = store.recall(project_id="proj-1", depth=3)
+        recalled, _stats = store.recall(project_id="proj-1", depth=3)
         memories = recalled.get("proj-1", [])
         assert all(m.id != memory.id for m in memories)
 
@@ -469,6 +470,61 @@ class TestDeleteMemory:
         assert second is False
 
 
+class TestUpdateMemory:
+    def test_update_content(self, store):
+        """update_memory changes content and updated_at."""
+        _make_project(store)
+        mem = _save_memory(store, content="Old content")
+        updated = store.update_memory(mem.id, content="New content")
+        assert updated is not None
+        assert updated.content == "New content"
+        assert updated.id == mem.id
+
+    def test_update_depth(self, store):
+        """update_memory changes depth."""
+        _make_project(store)
+        mem = _save_memory(store, content="Some info", depth=1)
+        updated = store.update_memory(mem.id, depth=0)
+        assert updated is not None
+        assert updated.depth == 0
+
+    def test_update_tags(self, store):
+        """update_memory replaces tags."""
+        _make_project(store)
+        mem = _save_memory(store, content="Tagged", tags=["old-tag"])
+        updated = store.update_memory(mem.id, tags=["new-tag-a", "new-tag-b"])
+        assert updated is not None
+        assert sorted(updated.tags) == ["new-tag-a", "new-tag-b"]
+
+    def test_update_not_found(self, store):
+        """update_memory returns None for non-existent ID."""
+        _make_project(store)
+        result = store.update_memory("nonexistent", content="x")
+        assert result is None
+
+    def test_update_superseded_returns_none(self, store):
+        """update_memory returns None for superseded memory."""
+        _make_project(store)
+        old = _save_memory(store, content="Old")
+        new = _save_memory(store, content="New")
+        store.supersede_memory(old.id, new.id)
+        result = store.update_memory(old.id, content="Try update")
+        assert result is None
+
+    def test_update_content_updates_fts(self, store):
+        """After updating content, FTS search finds new text."""
+        _make_project(store)
+        mem = _save_memory(store, content="alpha bravo")
+        store.update_memory(mem.id, content="charlie delta")
+        # Old content should not be found
+        old_results = store.search("alpha")
+        assert len(old_results) == 0
+        # New content should be found
+        new_results = store.search("charlie")
+        assert len(new_results) == 1
+        assert new_results[0].id == mem.id
+
+
 class TestSupersedeMemory:
     def test_supersede_memory(self, store):
         """supersede_memory links old memory to new memory via superseded_by."""
@@ -480,7 +536,7 @@ class TestSupersedeMemory:
 
         assert result is True
         # Old memory should no longer appear in recall.
-        recalled = store.recall(project_id="proj-1", depth=3)
+        recalled, _stats = store.recall(project_id="proj-1", depth=3)
         memories = recalled.get("proj-1", [])
         ids = [m.id for m in memories]
         assert old.id not in ids

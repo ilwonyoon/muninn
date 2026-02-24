@@ -50,9 +50,27 @@ def muninn_save(
 ) -> str:
     """Save important information to a project's memory.
 
-    Before calling, summarize the relevant conversation into key decisions,
-    specifications, and open questions.  Do NOT save raw conversation — distill
-    into structured, reusable context.
+    Summarize the relevant conversation into key decisions, specifications,
+    and open questions.  Do NOT save raw conversation — distill into
+    structured, reusable context.
+
+    Depth selection guide (IMPORTANT — choose carefully):
+      depth=0  SUMMARY   — Project one-liner. Max 3 sentences. Always loaded
+                           on recall. Create this FIRST when starting a new
+                           project.  Example: "Photo sharing app for parents.
+                           Flutter + Firebase. Family subscription $4.99/mo."
+      depth=1  CONTEXT   — Key decisions and specs. 200-500 chars each.
+                           Loaded by default on recall.  One memory per topic.
+      depth=2  DETAILED  — Implementation details, competitor analysis,
+                           full persona docs.  Loaded only when requested.
+      depth=3  FULL      — Complete history, debug logs, raw data.
+                           Rarely used.
+
+    Best practices:
+      - Always create a depth=0 summary first for new projects.
+      - Keep each memory focused on ONE topic (don't combine unrelated info).
+      - Prefer multiple short memories over one long memory.
+      - Tag memories for easy filtering later.
     """
     try:
         store = _get_store()
@@ -89,13 +107,22 @@ def muninn_recall(
     """Load project context from Muninn memory.
 
     Call this at session start or when the user mentions a project.  If no
-    project specified, loads all active projects at depth 0-1.  This gives you
-    context without re-explanation.
+    project specified, loads all active projects.
+
+    Depth controls how much detail to load:
+      depth=0  — Summaries only (quick overview of all projects)
+      depth=1  — Summaries + key decisions (default, good for most cases)
+      depth=2  — Above + implementation details (when diving deep)
+      depth=3  — Everything (rarely needed)
+
+    max_chars limits total output to avoid flooding the context window.
+    Memories are loaded lowest-depth-first, newest-first within each depth.
+    If the budget is exceeded, deeper/older memories are dropped.
     """
     try:
         store = _get_store()
 
-        memories_by_project = store.recall(
+        memories_by_project, recall_stats = store.recall(
             project_id=project,
             depth=depth,
             max_chars=max_chars,
@@ -111,7 +138,7 @@ def muninn_recall(
                 continue
             projects_memories[project_id] = (proj, memories)
 
-        return format_recall(projects_memories)
+        return format_recall(projects_memories, stats=recall_stats)
 
     except Exception as exc:
         return f"Error recalling memories: {exc}"
@@ -167,6 +194,7 @@ def muninn_manage(
     """Manage projects and memories.
 
     Actions: set_status (active/paused/idea/archived), delete_memory,
+    update_memory (field: content/depth, or tags via value as comma-separated),
     update_project (field: summary/github_repo/name), create_project.
     """
     try:
@@ -211,6 +239,36 @@ def muninn_manage(
             return format_manage_result(
                 "Project updated",
                 f"{updated.id}.{field} = {value!r}",
+            )
+
+        if action == "update_memory":
+            if memory_id is None:
+                return "Error: 'memory_id' parameter is required for update_memory action."
+
+            update_kwargs: dict[str, object] = {}
+            if field == "content" and value is not None:
+                update_kwargs["content"] = value
+            elif field == "depth" and value is not None:
+                try:
+                    update_kwargs["depth"] = int(value)
+                except ValueError:
+                    return f"Error: depth must be an integer, got '{value}'."
+            elif field == "tags" and value is not None:
+                update_kwargs["tags"] = [t.strip() for t in value.split(",") if t.strip()]
+            elif field is not None:
+                return f"Error: invalid field '{field}' for update_memory. Must be one of: content, depth, tags."
+            elif value is not None:
+                # No field specified but value given — default to content update
+                update_kwargs["content"] = value
+            else:
+                return "Error: 'value' parameter is required for update_memory action."
+
+            updated = store.update_memory(memory_id, **update_kwargs)
+            if updated is None:
+                return f"Error: memory '{memory_id}' not found or already superseded."
+            return format_manage_result(
+                "Memory updated",
+                f"memory {memory_id[:8]} in {project}",
             )
 
         if action == "create_project":

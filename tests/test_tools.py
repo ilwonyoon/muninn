@@ -298,6 +298,39 @@ class TestMuninnManageDeleteMemory:
         assert "Error" in result
 
 
+class TestMuninnManageUpdateMemory:
+    def test_update_memory_content(self, initialized_store):
+        """update_memory with content returns 'Memory updated'."""
+        initialized_store.create_project(id="um-proj", name="UM")
+        memory = initialized_store.save_memory(project_id="um-proj", content="Old text")
+        result = muninn_manage(
+            action="update_memory",
+            project="um-proj",
+            memory_id=memory.id,
+            field="content",
+            value="New text",
+        )
+        assert "Memory updated" in result
+
+    def test_update_memory_missing_id(self, initialized_store):
+        """update_memory without memory_id returns error."""
+        initialized_store.create_project(id="um-proj2", name="UM2")
+        result = muninn_manage(action="update_memory", project="um-proj2", value="x")
+        assert "Error" in result
+        assert "memory_id" in result.lower()
+
+    def test_update_memory_nonexistent(self, initialized_store):
+        """update_memory with non-existent id returns error."""
+        initialized_store.create_project(id="um-proj3", name="UM3")
+        result = muninn_manage(
+            action="update_memory",
+            project="um-proj3",
+            memory_id="does-not-exist",
+            value="New content",
+        )
+        assert "Error" in result
+
+
 class TestMuninnManageUpdateProject:
     def test_update_project_valid_field(self, initialized_store):
         """update_project with a valid field returns 'Project updated'."""

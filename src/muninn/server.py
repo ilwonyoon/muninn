@@ -17,7 +17,18 @@ from muninn.tools import (
     muninn_status,
 )
 
-mcp = FastMCP("muninn", instructions="Persistent project memory for AI assistants.")
+mcp = FastMCP(
+    "muninn",
+    instructions=(
+        "Muninn is persistent project memory for AI assistants. "
+        "When saving memories, ALWAYS choose the appropriate depth: "
+        "0=project summary (create first for new projects), "
+        "1=key decisions (default), 2=detailed specs, 3=full history. "
+        "Keep each memory focused on one topic, 200-500 chars for depth 0-1. "
+        "When recalling, start with depth=1 for general context. "
+        "Use depth=0 for quick project overview, depth=2+ for deep dives."
+    ),
+)
 
 mcp.tool()(muninn_save)
 mcp.tool()(muninn_recall)
