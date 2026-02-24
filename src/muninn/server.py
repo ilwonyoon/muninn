@@ -21,12 +21,13 @@ mcp = FastMCP(
     "muninn",
     instructions=(
         "Muninn is persistent project memory for AI assistants. "
-        "When saving memories, ALWAYS choose the appropriate depth: "
-        "0=project summary (create first for new projects), "
-        "1=key decisions (default), 2=detailed specs, 3=full history. "
-        "Keep each memory focused on one topic, 200-500 chars for depth 0-1. "
-        "When recalling, start with depth=1 for general context. "
-        "Use depth=0 for quick project overview, depth=2+ for deep dives."
+        "When saving, ALWAYS choose depth carefully: "
+        "0='What is this?' (project summary, create FIRST), "
+        "1='To continue' (resume next session, default), "
+        "2='To go deeper' (detailed analysis), "
+        "3='Just in case' (archive/logs). "
+        "Keep depth 0-1 memories short (200-500 chars), one topic each. "
+        "These depth meanings work for ANY project type: app, content, research, etc."
     ),
 )
 

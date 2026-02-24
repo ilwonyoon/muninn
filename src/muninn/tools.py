@@ -50,21 +50,21 @@ def muninn_save(
 ) -> str:
     """Save important information to a project's memory.
 
-    Summarize the relevant conversation into key decisions, specifications,
-    and open questions.  Do NOT save raw conversation — distill into
-    structured, reusable context.
+    Distill conversation into structured, reusable context.
+    Do NOT save raw conversation — summarize into key points.
 
-    Depth selection guide (IMPORTANT — choose carefully):
-      depth=0  SUMMARY   — Project one-liner. Max 3 sentences. Always loaded
-                           on recall. Create this FIRST when starting a new
-                           project.  Example: "Photo sharing app for parents.
-                           Flutter + Firebase. Family subscription $4.99/mo."
-      depth=1  CONTEXT   — Key decisions and specs. 200-500 chars each.
-                           Loaded by default on recall.  One memory per topic.
-      depth=2  DETAILED  — Implementation details, competitor analysis,
-                           full persona docs.  Loaded only when requested.
-      depth=3  FULL      — Complete history, debug logs, raw data.
-                           Rarely used.
+    Depth guide — works for ANY project type (app, content, research, etc.):
+      depth=0  "What is this?"    — Grasp the project in 10 seconds.
+                                    Max 3 sentences. Always loaded on recall.
+                                    Create this FIRST for every new project.
+      depth=1  "To continue"      — What you need to resume work next session.
+                                    Key decisions, current direction, open questions.
+                                    200-500 chars each. One memory per topic.
+      depth=2  "To go deeper"     — Details needed when diving into a specific area.
+                                    Deep analysis, full research, detailed plans.
+                                    Loaded only when explicitly requested.
+      depth=3  "Just in case"     — Archive and reference. Raw data, old versions,
+                                    logs. Rarely loaded.
 
     Best practices:
       - Always create a depth=0 summary first for new projects.
@@ -109,11 +109,11 @@ def muninn_recall(
     Call this at session start or when the user mentions a project.  If no
     project specified, loads all active projects.
 
-    Depth controls how much detail to load:
-      depth=0  — Summaries only (quick overview of all projects)
-      depth=1  — Summaries + key decisions (default, good for most cases)
-      depth=2  — Above + implementation details (when diving deep)
-      depth=3  — Everything (rarely needed)
+    Depth controls how much to load:
+      depth=0  — "What is this?" summaries only (quick project overview)
+      depth=1  — Above + "To continue" context (default, resume work)
+      depth=2  — Above + "To go deeper" details (dive into specifics)
+      depth=3  — Everything including archives (rarely needed)
 
     max_chars limits total output to avoid flooding the context window.
     Memories are loaded lowest-depth-first, newest-first within each depth.
