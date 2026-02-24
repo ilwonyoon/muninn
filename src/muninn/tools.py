@@ -7,6 +7,8 @@ server.py.  The module-level ``_store`` is initialised once at startup via
 
 from __future__ import annotations
 
+from typing import Literal
+
 from muninn.formatter import (
     format_manage_result,
     format_recall,
@@ -184,7 +186,7 @@ def muninn_status() -> str:
 
 
 def muninn_manage(
-    action: str,
+    action: Literal["set_status", "delete_memory", "update_memory", "update_project", "create_project"],
     project: str,
     status: str | None = None,
     memory_id: str | None = None,
