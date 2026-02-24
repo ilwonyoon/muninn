@@ -127,7 +127,8 @@ def format_recall(
             for mem in group:
                 label = _DEPTH_LABELS.get(mem.depth, str(mem.depth))
                 date = _date_label(mem.updated_at)
-                lines.append(f"- [{label}] {mem.content} ({date})")
+                short_id = mem.id[:8] if len(mem.id) >= 8 else mem.id
+                lines.append(f"- [{label}] ({short_id}) {mem.content} ({date})")
                 if mem.tags:
                     lines.append(f"  tags: {', '.join(mem.tags)}")
 
@@ -211,7 +212,8 @@ def format_search_results(memories: list[Memory], query: str) -> str:
     for mem in memories:
         label = _DEPTH_LABELS.get(mem.depth, str(mem.depth))
         date = _date_label(mem.updated_at)
-        lines.append(f"[{mem.project_id}] {mem.content} ({label}, {date})")
+        short_id = mem.id[:8] if len(mem.id) >= 8 else mem.id
+        lines.append(f"[{mem.project_id}] ({short_id}) {mem.content} ({label}, {date})")
         if mem.tags:
             lines.append(f"  tags: {', '.join(mem.tags)}")
 

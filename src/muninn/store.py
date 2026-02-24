@@ -533,20 +533,47 @@ class MuninnStore:
             for r in rows
         ]
 
+    def _resolve_memory_id(self, conn: sqlite3.Connection, memory_id: str) -> str | None:
+        """Resolve a full or prefix memory ID to the actual full ID.
+
+        If *memory_id* is an exact match, return it directly.  Otherwise treat
+        it as a prefix and return the unique match.  Returns ``None`` when no
+        match or ambiguous (multiple matches).
+        """
+        # Try exact match first.
+        row = conn.execute(
+            "SELECT id FROM memories WHERE id = ?", (memory_id,)
+        ).fetchone()
+        if row is not None:
+            return row["id"]
+
+        # Prefix match.
+        rows = conn.execute(
+            "SELECT id FROM memories WHERE id LIKE ?",
+            (memory_id + "%",),
+        ).fetchall()
+        if len(rows) == 1:
+            return rows[0]["id"]
+        return None
+
     def delete_memory(self, memory_id: str) -> bool:
         """Soft-delete a memory by setting ``superseded_by`` to ``'_deleted'``.
 
+        Accepts full UUIDs or unique prefixes (e.g. first 6-8 chars).
         Returns ``True`` if the memory existed and was updated.
         """
         now = _now_iso()
         with self._get_connection() as conn:
+            resolved = self._resolve_memory_id(conn, memory_id)
+            if resolved is None:
+                return False
             cursor = conn.execute(
                 """
                 UPDATE memories
                 SET superseded_by = '_deleted', updated_at = ?
                 WHERE id = ? AND superseded_by IS NULL
                 """,
-                (now, memory_id),
+                (now, resolved),
             )
         return cursor.rowcount > 0
 
@@ -559,11 +586,18 @@ class MuninnStore:
     ) -> "Memory | None":
         """Update an existing memory's content, depth, and/or tags.
 
+        Accepts full UUIDs or unique prefixes (e.g. first 6-8 chars).
         Only non-None parameters are updated. Returns the updated Memory,
         or None if the memory was not found or is superseded.
         """
         now = _now_iso()
         with self._get_connection() as conn:
+            # Resolve prefix to full ID
+            resolved = self._resolve_memory_id(conn, memory_id)
+            if resolved is None:
+                return None
+            memory_id = resolved
+
             # Check memory exists and is not superseded
             row = conn.execute(
                 "SELECT * FROM memories WHERE id = ? AND superseded_by IS NULL",

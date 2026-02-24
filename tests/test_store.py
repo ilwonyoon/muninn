@@ -525,6 +525,50 @@ class TestUpdateMemory:
         assert new_results[0].id == mem.id
 
 
+class TestPrefixIdMatching:
+    def test_delete_memory_with_prefix(self, store):
+        """delete_memory accepts a unique prefix of the memory ID."""
+        _make_project(store)
+        mem = _save_memory(store, content="Delete me by prefix")
+        prefix = mem.id[:8]
+
+        result = store.delete_memory(prefix)
+
+        assert result is True
+        recalled, _ = store.recall(project_id="proj-1", depth=3)
+        memories = recalled.get("proj-1", [])
+        assert all(m.id != mem.id for m in memories)
+
+    def test_update_memory_with_prefix(self, store):
+        """update_memory accepts a unique prefix of the memory ID."""
+        _make_project(store)
+        mem = _save_memory(store, content="Update me by prefix")
+        prefix = mem.id[:8]
+
+        updated = store.update_memory(prefix, content="Updated via prefix")
+
+        assert updated is not None
+        assert updated.content == "Updated via prefix"
+        assert updated.id == mem.id
+
+    def test_prefix_returns_none_for_no_match(self, store):
+        """Prefix that matches nothing returns None/False."""
+        _make_project(store)
+        _save_memory(store, content="Some content")
+
+        assert store.delete_memory("zzzzzzzz") is False
+        assert store.update_memory("zzzzzzzz", content="x") is None
+
+    def test_full_id_still_works(self, store):
+        """Full UUID still works for delete and update."""
+        _make_project(store)
+        mem = _save_memory(store, content="Full ID test")
+
+        updated = store.update_memory(mem.id, content="Updated with full ID")
+        assert updated is not None
+        assert updated.content == "Updated with full ID"
+
+
 class TestSupersedeMemory:
     def test_supersede_memory(self, store):
         """supersede_memory links old memory to new memory via superseded_by."""

@@ -137,6 +137,16 @@ class TestMuninnRecall:
         assert "Level zero" in result
         assert "Level two" not in result
 
+    def test_recall_shows_memory_ids(self, initialized_store):
+        """Recall output includes short memory IDs for use with delete/update."""
+        initialized_store.create_project(id="idtest", name="ID Test")
+        mem = initialized_store.save_memory(project_id="idtest", content="ID visible memory")
+
+        result = muninn_recall(project="idtest")
+
+        short_id = mem.id[:8]
+        assert short_id in result
+
     def test_recall_all_active_projects(self, initialized_store):
         """Recall with project=None returns memories from all active projects."""
         initialized_store.create_project(id="proj-a", name="A")
