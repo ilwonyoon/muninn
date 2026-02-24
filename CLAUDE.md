@@ -26,7 +26,7 @@ Muninn is a cross-tool MCP (Model Context Protocol) memory server for solo build
 - **Language:** Python 3.11+
 - **MCP SDK:** `mcp>=1.25,<2` (FastMCP)
 - **Database:** SQLite with WAL mode, FTS5 full-text search
-- **Transport:** stdio (Phase 1)
+- **Transport:** stdio + Streamable HTTP (with Bearer auth)
 - **Build:** hatchling
 - **Tests:** pytest
 
@@ -39,11 +39,14 @@ src/muninn/
   store.py        # SQLite operations: CRUD, recall, search, FTS5
   formatter.py    # LLM-readable output formatting
   tools.py        # MCP tool functions (5 tools)
-  server.py       # FastMCP entry point
+  server.py       # FastMCP entry point (stdio + HTTP, CLI args)
+  auth.py         # Bearer token middleware for HTTP transport
 tests/
   conftest.py     # Shared fixtures (tmp_path store)
   test_store.py   # Store unit tests
   test_tools.py   # Tool function tests
+  test_server.py  # CLI parsing, MCP instance creation
+  test_auth.py    # Bearer token middleware tests
 docs/
   PRD.md          # Product Requirements Document
 ```
@@ -54,11 +57,14 @@ docs/
 # Install (editable with dev deps)
 uv pip install -e ".[dev]"
 
-# Run tests
+# Run tests (104 tests)
 .venv/bin/python -m pytest tests/ -v
 
-# Run the MCP server (stdio)
+# Run the MCP server (stdio — default)
 .venv/bin/python -m muninn.server
+
+# Run the MCP server (HTTP with auth)
+MUNINN_API_KEY=secret .venv/bin/python -m muninn.server --transport http --port 8000
 ```
 
 ## Architecture Decisions
@@ -70,6 +76,10 @@ uv pip install -e ".[dev]"
 - **Junction table for tags** — `memory_tags` table instead of JSON TEXT column for proper FTS indexing
 - **FTS5 sync triggers** — INSERT/UPDATE/DELETE triggers keep `memories_fts` in sync automatically
 - **WAL + busy_timeout** — Handles concurrent access from multiple MCP clients
+- **Dual transport** — stdio for local tools, Streamable HTTP for remote (Claude Web/Mobile, ChatGPT)
+- **Bearer token auth** — ASGI middleware on HTTP transport, key via `MUNINN_API_KEY` env var
+- **Prefix ID matching** — `delete_memory`/`update_memory` accept 6-8 char prefixes, not just full UUIDs
+- **Literal enum on action** — `muninn_manage` uses `Literal[...]` so JSON schema includes enum for LLM discovery
 
 ## MCP Tools (5 total)
 
