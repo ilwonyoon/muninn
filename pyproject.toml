@@ -21,8 +21,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+http = ["uvicorn>=0.30.0", "starlette>=0.38.0"]
 github = ["pygithub>=2.0.0"]
 dev = ["pytest>=8.0", "pytest-anyio>=0.0.0"]
+all = ["muninn-mcp[http,github]"]
 
 [project.scripts]
 muninn = "muninn.server:main"
