@@ -1,0 +1,19 @@
+services:
+  muninn:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - muninn-data:/data
+    environment:
+      - MUNINN_DB_PATH=/data/muninn.db
+      # Uncomment for OAuth mode:
+      # - MUNINN_OWNER_PASSWORD=your-pin-here
+      # Uncomment for Bearer token mode:
+      # - MUNINN_API_KEY=your-api-key-here
+      # Uncomment for GitHub sync:
+      # - GITHUB_TOKEN=ghp_your-token-here
+    restart: unless-stopped
+
+volumes:
+  muninn-data:
