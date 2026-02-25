@@ -78,6 +78,27 @@ def validate_memory_content(content: str) -> None:
         raise ValueError("Memory content must not be empty or whitespace-only.")
 
 
+def validate_tags(tags: list[str] | tuple[str, ...] | None) -> list[str]:
+    """Normalise and validate tags, returning a clean list.
+
+    Handles common LLM mistakes:
+      - String instead of list: ``"bug,auth"`` → ``["bug", "auth"]``
+      - Single string: ``"bug"`` → ``["bug"]``
+      - None → ``[]``
+
+    Raises ValueError for empty/whitespace tags after splitting.
+    """
+    if tags is None:
+        return []
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.split(",") if t.strip()]
+    result = list(tags)
+    for tag in result:
+        if not isinstance(tag, str) or not tag.strip():
+            raise ValueError("Tags must be non-empty strings.")
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Dataclasses
 # ---------------------------------------------------------------------------

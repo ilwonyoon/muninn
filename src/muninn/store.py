@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from muninn.models import Memory, MemorySource, Project, ProjectStatus, validate_memory_content
+from muninn.models import Memory, MemorySource, Project, ProjectStatus, validate_memory_content, validate_tags
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -399,7 +399,7 @@ class MuninnStore:
 
         memory_id = uuid.uuid4().hex
         now = _now_iso()
-        tag_list = tags or []
+        tag_list = validate_tags(tags)
 
         conn = self._get_connection()
         try:
@@ -695,11 +695,12 @@ class MuninnStore:
 
                 # Update tags if provided
                 if tags is not None:
+                    validated_tags = validate_tags(tags)
                     conn.execute(
                         "DELETE FROM memory_tags WHERE memory_id = ?",
                         (memory_id,),
                     )
-                    for tag in tags:
+                    for tag in validated_tags:
                         conn.execute(
                             "INSERT INTO memory_tags (memory_id, tag) VALUES (?, ?)",
                             (memory_id, tag),
