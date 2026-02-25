@@ -9,6 +9,7 @@ import type {
   DashboardStats,
   MemoriesResponse,
   Memory,
+  MemoryGraphResponse,
   Project,
   SearchResponse,
 } from "./types";
@@ -85,6 +86,7 @@ export function createMemory(data: {
   content: string;
   depth?: number;
   tags?: string[];
+  parent_memory_id?: string;
 }): Promise<Memory> {
   return fetchJSON("/memories", {
     method: "POST",
@@ -94,7 +96,7 @@ export function createMemory(data: {
 
 export function updateMemory(
   id: string,
-  data: Partial<Pick<Memory, "content" | "depth" | "tags">>
+  data: Partial<Pick<Memory, "content" | "depth" | "tags" | "parent_memory_id">>
 ): Promise<Memory> {
   return fetchJSON(`/memories/${id}`, {
     method: "PATCH",
@@ -108,6 +110,12 @@ export function deleteMemory(id: string): Promise<{ deleted: boolean }> {
 
 export function getSupersedeChain(id: string): Promise<Memory[]> {
   return fetchJSON(`/memories/${id}/chain`);
+}
+
+// -- Graph ------------------------------------------------------------------
+
+export function getMemoryGraph(projectId: string): Promise<MemoryGraphResponse> {
+  return fetchJSON(`/projects/${projectId}/graph`);
 }
 
 // -- Search, Tags, Stats ----------------------------------------------------

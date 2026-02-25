@@ -20,6 +20,7 @@ import type { Memory } from "@/lib/types";
 import { relativeTime } from "@/lib/utils";
 import { DepthBadge } from "@/components/muninn/depth-badge";
 import { TagPill } from "@/components/muninn/tag-pill";
+import { MarkdownContent } from "@/components/muninn/markdown-content";
 import { SupersedeChain } from "@/components/muninn/supersede-chain";
 import { useAppToast } from "@/lib/toast-context";
 
@@ -264,11 +265,11 @@ export default function MemoryDetailPage() {
             value={editContent}
             onChange={(e) => setEditContent(e.target.value)}
             rows={12}
-            className="mt-2 w-full resize-y rounded-lg border border-border bg-card-hover p-3 font-mono text-xs text-foreground placeholder:text-muted focus:border-accent focus:outline-none"
+            className="mt-2 w-full resize-y rounded-lg border border-border bg-card-hover p-3 font-mono text-sm leading-relaxed text-foreground placeholder:text-muted focus:border-accent focus:outline-none"
           />
         ) : (
-          <div className="mt-2 whitespace-pre-wrap rounded-lg border border-border bg-card-hover p-4 font-mono text-xs leading-relaxed text-foreground">
-            {memory.content}
+          <div className="mt-2 rounded-lg border border-border bg-card-hover p-4">
+            <MarkdownContent content={memory.content} />
           </div>
         )}
       </div>

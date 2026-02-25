@@ -3,6 +3,12 @@
 /* ----------------------------------------------------------------
    Muninn Design Tokens — Dark-first
    Vercel Structure + Supabase Color + Linear Interactions
+   ----------------------------------------------------------------
+   Font Size Scale:
+     --font-size-body:    14px (text-sm)     — main readable text, content
+     --font-size-caption: 12px (text-xs)     — meta info, timestamps, short_id
+     --font-size-micro:   10px (text-[10px]) — badges, keyboard hints only
+     --font-size-heading: 16px (text-base)   — section headers, h1
    ---------------------------------------------------------------- */
 
 :root {
@@ -97,6 +103,15 @@ body {
   background: var(--border-hover);
 }
 
+/* Panel slide-in */
+@keyframes slide-in-from-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+.animate-slide-in-from-right {
+  animation: slide-in-from-right 200ms ease-out;
+}
+
 /* Animations — keyed to Radix data-state attributes */
 @keyframes fade-in {
   from { opacity: 0; }
@@ -134,6 +149,26 @@ body {
 }
 [data-radix-toast][data-swipe-direction="right"][data-swipe="end"] {
   animation: slide-out-to-right 150ms ease-in;
+}
+
+/* React Flow — dark theme overrides */
+.react-flow__background {
+  background: var(--bg-000) !important;
+}
+.react-flow__controls button {
+  background: var(--bg-200) !important;
+  border-color: var(--border-default) !important;
+  color: var(--fg-100) !important;
+  fill: var(--fg-100) !important;
+}
+.react-flow__controls button:hover {
+  background: var(--bg-300) !important;
+}
+.react-flow__minimap {
+  background: var(--bg-100) !important;
+}
+.react-flow__edge-path {
+  stroke: var(--border-hover) !important;
 }
 
 /* cmdk overrides */

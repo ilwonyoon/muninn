@@ -23,6 +23,7 @@ export interface Memory {
   source: "conversation" | "github" | "manual";
   tags: string[];
   superseded_by: string | null;
+  parent_memory_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -49,6 +50,17 @@ export interface DashboardStats {
   active_projects: number;
   total_memories: number;
   stale_projects: number;
+}
+
+export interface GraphEdge {
+  id: string;
+  source: string;
+  target: string;
+}
+
+export interface MemoryGraphResponse {
+  nodes: Memory[];
+  edges: GraphEdge[];
 }
 
 export interface ApiError {
