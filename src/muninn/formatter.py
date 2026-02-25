@@ -196,22 +196,17 @@ def format_status(projects: list[Project]) -> str:
 def format_search_results(
     memories: list[Memory],
     query: str,
-    semantic: bool = False,
 ) -> str:
     """Format search results for a given query.
 
     Args:
         memories: List of Memory instances matching the query.
         query: The search query string.
-        semantic: If True, indicates results came from semantic search.
 
     Returns:
         Plain-text formatted search results.
     """
-    if semantic:
-        lines: list[str] = [f'🧠 Semantic search results for "{query}"', ""]
-    else:
-        lines = [f'🔍 Search results for "{query}"', ""]
+    lines: list[str] = [f'🔍 Search results for "{query}"', ""]
 
     if not memories:
         lines.append("No results found.")

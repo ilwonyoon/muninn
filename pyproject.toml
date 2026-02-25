@@ -28,9 +28,8 @@ Issues = "https://github.com/ilwonyoon/muninn/issues"
 [project.optional-dependencies]
 http = ["uvicorn>=0.30.0", "starlette>=0.38.0"]
 github = ["pygithub>=2.0.0"]
-semantic = ["fastembed>=0.4.0,<1", "numpy>=1.24"]
-dev = ["pytest>=8.0", "pytest-anyio>=0.0.0", "uvicorn>=0.30.0", "starlette>=0.38.0", "numpy>=1.24"]
-all = ["muninn-mcp[http,github,semantic]"]
+dev = ["pytest>=8.0", "pytest-anyio>=0.0.0", "uvicorn>=0.30.0", "starlette>=0.38.0"]
+all = ["muninn-mcp[http,github]"]
 
 [project.scripts]
 muninn = "muninn.server:main"

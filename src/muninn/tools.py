@@ -205,7 +205,6 @@ def muninn_search(
     project: str | None = None,
     tags: list[str] | None = None,
     limit: int = 50,
-    semantic: bool = False,
 ) -> str:
     """Full-text search across project memories by keyword or phrase.
 
@@ -223,43 +222,15 @@ def muninn_search(
       project  — limit to one project's memories
       tags     — filter to memories with specific tags (e.g. ['decision', 'bug'])
       limit    — max memories returned (default 50, lower for faster scans)
-      semantic — if True, skip FTS5 and use embedding similarity only.
-                 if False (default), try FTS5 first, fall back to semantic
-                 search when FTS5 returns no results and embeddings are available.
 
-    Results are ranked by FTS5 relevance (keyword mode) or cosine similarity
-    (semantic mode). Inspect the project field on each result to identify which
-    project owns the memory, then call muninn_recall on that project if you
-    need full context.
+    Results are ranked by FTS5 relevance. Inspect the project field on each result
+    to identify which project owns the memory, then call muninn_recall on that
+    project if you need full context.
     """
     _log_usage("muninn_search", project=project)
     try:
         store = _get_store()
 
-        # --- Semantic-only path ---
-        if semantic:
-            from muninn.embedder import embed_text, is_available
-
-            if not is_available():
-                return (
-                    "Error: semantic search requires the fastembed package. "
-                    "Install it with: pip install muninn-mcp[semantic]"
-                )
-
-            query_embedding = embed_text(query)
-            if query_embedding is None:
-                return "Error: failed to generate embedding for query."
-
-            results = store.semantic_search(
-                query_embedding=query_embedding,
-                project_id=project,
-                tags=tags,
-                limit=limit,
-            )
-            memories = [mem for mem, _score in results]
-            return format_search_results(memories, query, semantic=True)
-
-        # --- Default path: FTS5 first, semantic fallback ---
         memories = store.search(
             query=query,
             project_id=project,
@@ -267,33 +238,7 @@ def muninn_search(
             limit=limit,
         )
 
-        if memories:
-            return format_search_results(memories, query)
-
-        # FTS5 returned nothing — try semantic fallback if available.
-        from muninn.embedder import embed_text, is_available
-
-        if not is_available():
-            return format_search_results(memories, query)
-
-        query_embedding = embed_text(query)
-        if query_embedding is None:
-            return format_search_results(memories, query)
-
-        # Backfill any NULL embeddings before searching.
-        store.backfill_embeddings()
-
-        results = store.semantic_search(
-            query_embedding=query_embedding,
-            project_id=project,
-            tags=tags,
-            limit=limit,
-        )
-        if results:
-            memories = [mem for mem, _score in results]
-            return format_search_results(memories, query, semantic=True)
-
-        return format_search_results([], query)
+        return format_search_results(memories, query)
 
     except Exception as exc:
         return f"Error searching memories: {exc}"
