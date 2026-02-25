@@ -18,6 +18,16 @@ if TYPE_CHECKING:
     from muninn.store import MuninnStore
 
 
+def _safe_int(value: str | None, default: int, lo: int, hi: int) -> int:
+    """Parse an integer from a query param, clamped to [lo, hi]."""
+    if value is None:
+        return default
+    try:
+        return max(lo, min(hi, int(value)))
+    except (ValueError, TypeError):
+        return default
+
+
 def _memory_to_dict(memory: object) -> dict:
     """Convert a Memory dataclass to a JSON-friendly dict."""
     d = asdict(memory)  # type: ignore[arg-type]
@@ -123,8 +133,8 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
                 {"error": f"Project '{project_id}' not found", "code": "NOT_FOUND"},
                 status_code=404,
             )
-        depth = int(request.query_params.get("depth", "3"))
-        max_chars = int(request.query_params.get("max_chars", "50000"))
+        depth = _safe_int(request.query_params.get("depth"), default=3, lo=0, hi=3)
+        max_chars = _safe_int(request.query_params.get("max_chars"), default=50000, lo=100, hi=500000)
         tags_param = request.query_params.get("tags")
         tags = [t.strip() for t in tags_param.split(",") if t.strip()] if tags_param else None
 
@@ -171,11 +181,16 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
                 {"error": f"Project '{project_id}' not found", "code": "NOT_FOUND"},
                 status_code=404,
             )
+        raw_depth = body.get("depth", 1)
+        try:
+            depth = max(0, min(3, int(raw_depth)))
+        except (ValueError, TypeError):
+            depth = 1
         try:
             memory = store.save_memory(
                 project_id=project_id,
                 content=content,
-                depth=body.get("depth", 1),
+                depth=depth,
                 source=body.get("source", "manual"),
                 tags=body.get("tags"),
             )
@@ -199,7 +214,13 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
         if "content" in body:
             kwargs["content"] = body["content"]
         if "depth" in body:
-            kwargs["depth"] = body["depth"]
+            try:
+                kwargs["depth"] = max(0, min(3, int(body["depth"])))
+            except (ValueError, TypeError):
+                return JSONResponse(
+                    {"error": "depth must be an integer 0-3", "code": "BAD_REQUEST"},
+                    status_code=400,
+                )
         if "tags" in body:
             kwargs["tags"] = body["tags"]
         if not kwargs:
@@ -245,7 +266,7 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
         project_id = request.query_params.get("project")
         tags_param = request.query_params.get("tags")
         tags = [t.strip() for t in tags_param.split(",") if t.strip()] if tags_param else None
-        limit = int(request.query_params.get("limit", "50"))
+        limit = _safe_int(request.query_params.get("limit"), default=50, lo=1, hi=200)
 
         memories = store.search(
             query=query,
