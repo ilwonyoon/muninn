@@ -416,6 +416,158 @@ Muninn-specific
 
 ---
 
+## 4A. 데이터 레이어 — SQLite 스키마 → UI 필드 매핑
+
+대시보드가 렌더링하는 모든 데이터의 출처를 정확히 정의한다.
+
+### DB 스키마 (Schema v2)
+
+```sql
+-- projects 테이블
+projects (
+  id          TEXT PK,        -- 프로젝트 식별자 (예: "muninn")
+  name        TEXT NOT NULL,  -- 표시 이름 (예: "Muninn")
+  status      TEXT DEFAULT 'active'  -- CHECK: active|paused|idea|archived
+  summary     TEXT,           -- 프로젝트 한줄 요약 (nullable)
+  github_repo TEXT,           -- "owner/repo" 형식 (nullable)
+  created_at  TIMESTAMP,
+  updated_at  TIMESTAMP
+)
+
+-- memories 테이블
+memories (
+  id             TEXT PK,        -- UUID hex (32자)
+  project_id     TEXT FK→projects(id),
+  content        TEXT NOT NULL,  -- 메모리 본문
+  depth          INTEGER DEFAULT 1  -- CHECK: 0-3
+  source         TEXT DEFAULT 'conversation'  -- CHECK: conversation|github|manual
+  superseded_by  TEXT,           -- 다른 memory ID, '_deleted', 또는 NULL
+  created_at     TIMESTAMP,
+  updated_at     TIMESTAMP
+)
+
+-- memory_tags 정션 테이블
+memory_tags (
+  memory_id  TEXT FK→memories(id) ON DELETE CASCADE,
+  tag        TEXT NOT NULL,
+  PRIMARY KEY (memory_id, tag)
+)
+
+-- memories_fts (FTS5 가상 테이블, porter stemming)
+-- schema_version (마이그레이션 추적)
+```
+
+### Frozen Dataclass → JSON 응답 매핑
+
+```
+Project (frozen dataclass)           →  대시보드 JSON
+──────────────────────────────────────────────────────
+id: str                              →  프로젝트 ID / URL 파라미터
+name: str                            →  표시 이름
+status: str                          →  StatusIndicator 컴포넌트
+  "active"  → 🟢 --status-active
+  "paused"  → ⏸️ --status-paused
+  "idea"    → 💡 --status-idea
+  "archived"→ 📦 --status-archived
+summary: str | None                  →  프로젝트 카드 부제
+github_repo: str | None              →  GitHub 링크 + Sync 버튼 표시 여부
+created_at: str (ISO 8601)           →  "생성일" (relative_time 변환)
+updated_at: str (ISO 8601)           →  "마지막 업데이트" + FreshnessIndicator
+  7일 이상 → ⚠️ stale 하이라이트
+memory_count: int (computed)         →  프로젝트 카드의 "N memories" 배지
+```
+
+```
+Memory (frozen dataclass)            →  대시보드 JSON
+──────────────────────────────────────────────────────
+id: str (32자 hex)                   →  short_id = id[:8] (prefix matching)
+                                        MemoryRow에서 monospace (Geist Mono)
+project_id: str                      →  프로젝트 연결 / 브레드크럼
+content: str                         →  메모리 본문 (프리뷰: 첫 100자 + truncate)
+                                        상세뷰: 전체 텍스트 (인라인 편집 가능)
+depth: int (0-3)                     →  DepthBadge 컴포넌트
+  0 → "summary"   --depth-0 (#00cc88)
+  1 → "context"   --depth-1 (#3b82f6)   ← 기본값
+  2 → "detailed"  --depth-2 (#f59e0b)
+  3 → "full"      --depth-3 (#666666)
+source: str                          →  SourceBadge
+  "conversation" → 💬
+  "github"       → 🐙 (sync 아이콘)
+  "manual"       → ✏️
+tags: tuple[str, ...]                →  TagPill 컴포넌트 리스트
+                                        필터 클릭 시 해당 태그로 필터링
+superseded_by: str | None            →  SupersedeChain 시각화
+  None       → 활성 메모리 (정상 표시)
+  "_deleted" → 소프트 삭제 (UI에서 숨김)
+  다른 ID   → 대체됨 (체인 추적 가능)
+created_at: str                      →  생성일 표시
+updated_at: str                      →  "N일 전" + stale 판단
+```
+
+### Store 메서드 → API 엔드포인트 → UI 페이지 매핑
+
+| Store 메서드 | 반환 타입 | 사용하는 UI 페이지 | 주요 파라미터 |
+|-------------|----------|-------------------|-------------|
+| `list_projects(status?)` | `list[Project]` | Dashboard (메인), Sidebar | status로 그룹핑 |
+| `get_project(id)` | `Project \| None` | Project Detail 헤더 | - |
+| `recall(project_id?, depth, max_chars, tags?)` | `(dict[str, list[Memory]], stats)` | Project Detail 메모리 리스트 | depth 슬라이더, 태그 필터 |
+| `search(query, project_id?, tags?, limit)` | `list[Memory]` | Search 페이지, Cmd+K 결과 | 실시간 검색 |
+| `save_memory(project_id, content, depth, source, tags?)` | `Memory` | Save 다이얼로그 | - |
+| `update_memory(memory_id, content?, depth?, tags?)` | `Memory \| None` | Memory Detail 인라인 편집 | prefix ID 지원 |
+| `delete_memory(memory_id)` | `bool` | Memory Row 삭제 버튼, Bulk 삭제 | prefix ID 지원 |
+| `update_project(id, **kwargs)` | `Project` | Project 설정 편집 | name, status, summary, github_repo |
+| `create_project(id, name, summary?, github_repo?)` | `Project` | New Project 다이얼로그 | - |
+| `supersede_memory(old_id, new_id)` | `bool` | SupersedeChain 시각화 (읽기 전용) | - |
+
+### recall() 반환값 상세 — 대시보드 핵심 데이터
+
+```python
+# recall()은 두 값을 반환:
+memories_by_project: dict[str, list[Memory]]  # project_id → 메모리 리스트
+stats: dict[str, int] = {
+    "chars_loaded": int,     # 로드된 총 문자 수 → CharBudgetBar 분자
+    "chars_budget": int,     # max_chars 예산 → CharBudgetBar 분모
+    "memories_loaded": int,  # 로드된 메모리 수 → "N memories loaded" 표시
+    "memories_dropped": int, # 예산 초과로 빠진 수 → "N dropped" 경고
+}
+# 정렬: depth ASC, updated_at DESC
+# 필터: superseded_by IS NULL (활성만), depth <= 요청값
+```
+
+### 대시보드에서 필요하지만 현재 Store에 없는 데이터
+
+| 필요한 데이터 | 현재 상태 | 해결 방안 |
+|-------------|----------|---------|
+| Supersede 체인 (역방향 추적) | `superseded_by`는 순방향만 저장. "이 메모리를 대체한 메모리"는 있지만 "이 메모리가 대체한 메모리"는 쿼리 필요 | `WHERE superseded_by = :current_id` 역쿼리 추가 |
+| 프로젝트별 depth 분포 | 없음 (매번 계산 필요) | `GROUP BY depth` 집계 쿼리 또는 API 레벨 캐시 |
+| 태그 자동완성 목록 | 없음 | `SELECT DISTINCT tag FROM memory_tags` 쿼리 추가 |
+| 최근 사용 메모리 | usage.jsonl에만 있음 | usage.jsonl 파싱 또는 별도 recent 테이블 |
+| 전체 통계 (총 메모리 수, 프로젝트 수) | `list_projects()`에서 산출 가능 | Dashboard stat 카드용 집계 쿼리 추가 고려 |
+
+### REST API 레이어 결정
+
+현재 MCP Streamable HTTP는 도구 호출용 프로토콜이지 REST API가 아니다. 대시보드 옵션:
+
+**Option A: MCP 도구 직접 호출 (현재 설계)**
+- `POST /mcp` → `call_tool("muninn_status")` 형태
+- 장점: 추가 코드 없음, 기존 인프라 재사용
+- 단점: 문자열 반환 → JSON 파싱 필요, 비효율적
+
+**Option B: store.py 직접 임포트하는 REST API (추천)**
+- `server.py`에 FastAPI/Starlette 라우트 추가
+- `GET /api/projects` → `store.list_projects()` → JSON 직접 반환
+- `GET /api/projects/:id/memories` → `store.recall()` → 구조화된 JSON
+- 장점: 타입 안전, 효율적, 프론트엔드 친화
+- 단점: 새 API 레이어 코드 필요
+
+**Option C: 하이브리드**
+- 읽기 작업 → REST API (빈번, 성능 중요)
+- 쓰기 작업 → MCP 도구 재사용 (이미 검증됨)
+
+→ **Option B 추천.** dataclass를 `asdict()`로 JSON 직렬화하면 깔끔하다.
+
+---
+
 ## 5. 구현 로드맵
 
 ### Step 1: 프로젝트 스캐폴딩 (Day 1)
