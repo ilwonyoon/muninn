@@ -165,6 +165,17 @@ def _create_mcp(
     return mcp
 
 
+def _create_api_mount():
+    """Create the /api Mount with dashboard REST routes."""
+    from starlette.routing import Mount
+
+    from muninn.api import create_api_routes
+    from muninn.tools import _get_store
+
+    api_routes = create_api_routes(_get_store())
+    return Mount("/api", routes=api_routes)
+
+
 def _run_http(mcp: FastMCP, host: str, port: int) -> None:
     """Run the server with Streamable HTTP transport.
 
@@ -177,6 +188,8 @@ def _run_http(mcp: FastMCP, host: str, port: int) -> None:
 
     owner_password = os.environ.get("MUNINN_OWNER_PASSWORD")
     api_key = os.environ.get("MUNINN_API_KEY")
+
+    api_mount = _create_api_mount()
 
     if owner_password:
         # OAuth mode — FastMCP already has auth routes via constructor.
@@ -194,12 +207,13 @@ def _run_http(mcp: FastMCP, host: str, port: int) -> None:
             "OAuth 2.0 mode enabled. PIN required for authorization.",
             file=sys.stderr,
         )
+        # TODO: mount api_mount into OAuth app when needed
         uvicorn.run(app, host=host, port=port)
     elif api_key:
         # Legacy Bearer token mode.
         from muninn.auth import create_authenticated_app
 
-        app = create_authenticated_app(mcp, api_key)
+        app = create_authenticated_app(mcp, api_key, extra_routes=[api_mount])
         uvicorn.run(app, host=host, port=port)
     else:
         print(
