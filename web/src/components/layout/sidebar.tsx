@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Brain, Search, Settings } from "lucide-react";
+import { Brain, LayoutDashboard, Search, Settings } from "lucide-react";
 import { listProjects } from "@/lib/api";
 import type { Project } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -55,8 +55,24 @@ export function Sidebar() {
               : "text-muted hover:text-foreground"
           )}
         >
-          <Search className="h-3.5 w-3.5" />
+          <LayoutDashboard className="h-3.5 w-3.5" />
           Overview
+        </Link>
+
+        <Link
+          href="/search"
+          className={cn(
+            "flex items-center gap-2 rounded-md px-2 py-1.5 text-xs",
+            pathname === "/search"
+              ? "bg-card-hover text-foreground"
+              : "text-muted hover:text-foreground"
+          )}
+        >
+          <Search className="h-3.5 w-3.5" />
+          Search
+          <kbd className="ml-auto rounded border border-border px-1 py-0.5 font-mono text-[9px] text-muted">
+            Cmd+K
+          </kbd>
         </Link>
 
         {/* Project groups */}

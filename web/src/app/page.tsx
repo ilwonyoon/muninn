@@ -1,19 +1,32 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { FolderPlus } from "lucide-react";
 import { getStats, listProjects } from "@/lib/api";
 import type { DashboardStats, Project } from "@/lib/types";
 import { relativeTime } from "@/lib/utils";
 import { StatCard } from "@/components/muninn/stat-card";
 import { StatusDot } from "@/components/muninn/status-dot";
+import { CreateProjectDialog } from "@/components/muninn/create-project-dialog";
 
 export default function DashboardPage() {
+  return (
+    <Suspense>
+      <DashboardInner />
+    </Suspense>
+  );
+}
+
+function DashboardInner() {
+  const searchParams = useSearchParams();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  const [createOpen, setCreateOpen] = useState(false);
 
-  useEffect(() => {
+  const fetchData = () => {
     Promise.all([getStats(), listProjects()])
       .then(([s, p]) => {
         setStats(s);
@@ -21,19 +34,39 @@ export default function DashboardPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchData();
   }, []);
+
+  // Open create dialog if navigated via ?action=new-project
+  useEffect(() => {
+    if (searchParams.get("action") === "new-project") {
+      setCreateOpen(true);
+    }
+  }, [searchParams]);
 
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted">
-        Loading…
+        Loading...
       </div>
     );
   }
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
-      <h1 className="text-lg font-semibold text-foreground">Overview</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-semibold text-foreground">Overview</h1>
+        <button
+          type="button"
+          onClick={() => setCreateOpen(true)}
+          className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted hover:text-foreground"
+        >
+          <FolderPlus className="h-3 w-3" /> New Project
+        </button>
+      </div>
 
       {/* Stat cards */}
       {stats && (
@@ -86,6 +119,21 @@ export default function DashboardPage() {
           ))}
         </div>
       </div>
+
+      {/* Cmd+K hint */}
+      <div className="mt-6 text-center text-[10px] text-muted">
+        Press{" "}
+        <kbd className="rounded border border-border px-1 py-0.5 font-mono">
+          Cmd+K
+        </kbd>{" "}
+        to search
+      </div>
+
+      <CreateProjectDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreated={() => fetchData()}
+      />
     </div>
   );
 }
