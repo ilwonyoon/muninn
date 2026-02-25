@@ -1,7 +1,56 @@
 # Muninn Dashboard — Phase 3 Design & Implementation Plan
 
 > 작성일: 2026-02-25
-> 상태: Planning
+> 마지막 검토: 2026-02-25
+> 상태: Planning (코드베이스 전수 검토 완료)
+
+---
+
+## 0. 현재 상태 점검 — 대시보드 착수 전 확인사항
+
+### 코드베이스 현황 (이 브랜치 기준)
+
+| 항목 | 상태 | 근거 |
+|------|------|------|
+| **Phase 1 (Core MVP)** | 완료 | 6 MCP 도구, 218 테스트 전체 통과, Schema v2 |
+| **Phase 2A (Remote Access)** | 완료 | Streamable HTTP + OAuth 2.0 + Bearer token, PyPI v0.2.0 |
+| **Phase 2B (Automation)** | 대부분 완료 | `muninn_sync` 구현+테스트됨, Docker 완료, CI/CD 부분 |
+| **시맨틱 검색** | 다른 터미널에서 진행 중 | 이 브랜치에는 미반영 |
+| **대시보드** | 미착수 | 프론트엔드 파일 없음 (package.json, tsx 등 0개) |
+
+### PRD 원안 vs 현재 계획 차이점
+
+| 항목 | PRD 원안 | 현재 계획 | 이유 |
+|------|---------|----------|------|
+| **프레임워크** | React + Vite | Next.js 15 + shadcn/ui | Vercel 생태계 정합성. shadcn/ui가 Next.js 최적화. SSR로 초기 로드 개선 |
+| **API** | "Muninn HTTP 엔드포인트를 API로 사용" | Starlette REST API (store.py 직접 임포트) | MCP 도구는 문자열 반환 → JSON 파싱 비효율. 이미 Starlette ASGI 앱 사용 중이므로 라우트 추가 자연스러움 |
+| **포트** | localhost:3000 → localhost:8787 | localhost:3000 → localhost:8000 | 서버 기본 포트가 8000 (`server.py --port 8000`) |
+| **스코프** | 7개 핵심 기능 | 동일 + Cmd+K, 키보드, 통계 카드 | PRD 기능 전부 포함 + 2025-2026 UX 트렌드 반영 |
+
+### 서버 아키텍처 — 대시보드가 활용할 기반
+
+```
+server.py (현재 구조)
+├── main()
+│   ├── init_store(MuninnStore())     ← 모듈 레벨 싱글턴
+│   ├── _create_mcp(host, port, public_url)
+│   │   ├── FastMCP("muninn", instructions=..., streamable_http_path="/")
+│   │   ├── mcp.tool()(muninn_save)   ← 6개 MCP 도구 등록
+│   │   └── OAuth 설정 (MUNINN_OWNER_PASSWORD)
+│   └── _run_http(mcp, host, port)
+│       ├── OAuth 모드: mcp.streamable_http_app() + login routes
+│       ├── Bearer 모드: Starlette(routes=[Mount("/", mcp_app)], middleware=[BearerToken])
+│       └── No auth: mcp.run(transport="streamable-http")
+│
+│   ★ 대시보드 REST API 추가 지점:
+│   └── Bearer 모드의 Starlette 앱에 /api/* 라우트 추가
+│       또는 별도 api.py 모듈 → server.py에서 마운트
+```
+
+**핵심 사실:** `server.py`는 이미 **Starlette ASGI 앱**을 사용하고 있다.
+- Bearer 모드: `Starlette(routes=[Mount("/", app=mcp_asgi)], middleware=[...])`
+- OAuth 모드: `mcp._custom_starlette_routes.extend(login_routes)`
+→ REST 라우트 추가는 기존 패턴의 자연스러운 확장
 
 ---
 
@@ -568,12 +617,114 @@ stats: dict[str, int] = {
 
 ---
 
-## 5. 구현 로드맵
+## 5. 구현 로드맵 — 3단계
 
-### Step 1: 프로젝트 스캐폴딩 (Day 1)
+### 단계 A: 백엔드 준비 (Python 쪽)
+
+대시보드 프론트엔드 착수 전에 `server.py`에 REST API 레이어를 추가해야 한다.
+현재 모든 MCP 도구는 문자열을 반환하므로, 프론트엔드에서 직접 사용 불가.
+
+#### A-1: REST API 모듈 (`src/muninn/api.py`)
+
+```python
+# 새 파일: src/muninn/api.py
+# store.py를 직접 임포트, dataclass → dict → JSON 반환
+# Starlette Route 패턴 (기존 oauth_login.py와 동일 패턴)
+
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+from dataclasses import asdict
+
+def create_api_routes(store: MuninnStore) -> list[Route]:
+    """대시보드용 REST API 라우트 생성"""
+    ...
+```
+
+| REST Endpoint | HTTP | Store 메서드 | 반환 |
+|--------------|------|-------------|------|
+| `GET /api/projects` | GET | `list_projects(status?)` | `[{id, name, status, summary, github_repo, memory_count, created_at, updated_at}]` |
+| `GET /api/projects/:id` | GET | `get_project(id)` | `{...project, depth_distribution: {0: n, 1: n, ...}}` |
+| `GET /api/projects/:id/memories` | GET | `recall(project_id, depth, max_chars, tags)` | `{memories: [...], stats: {chars_loaded, chars_budget, ...}}` |
+| `GET /api/search` | GET | `search(query, project_id?, tags?, limit)` | `{results: [...], count: n}` |
+| `GET /api/tags` | GET | `SELECT DISTINCT tag` (신규 쿼리) | `["decision", "architecture", ...]` |
+| `GET /api/stats` | GET | 집계 쿼리 (신규) | `{total_projects, total_memories, active_projects, ...}` |
+| `POST /api/projects` | POST | `create_project(id, name, ...)` | `{...project}` |
+| `PATCH /api/projects/:id` | PATCH | `update_project(id, **kwargs)` | `{...project}` |
+| `POST /api/memories` | POST | `save_memory(project_id, ...)` | `{...memory}` |
+| `PATCH /api/memories/:id` | PATCH | `update_memory(id, ...)` | `{...memory}` |
+| `DELETE /api/memories/:id` | DELETE | `delete_memory(id)` | `{deleted: true}` |
+| `GET /api/memories/:id/chain` | GET | supersede 체인 쿼리 (신규) | `[{id, content, superseded_by, created_at}, ...]` |
+
+#### A-2: Store에 추가할 쿼리 메서드
+
+```python
+# store.py에 추가:
+
+def get_depth_distribution(self, project_id: str) -> dict[int, int]:
+    """프로젝트별 depth 분포 (depth → count)"""
+    # SELECT depth, COUNT(*) FROM memories
+    # WHERE project_id = ? AND superseded_by IS NULL
+    # GROUP BY depth
+
+def get_all_tags(self, project_id: str | None = None) -> list[str]:
+    """태그 자동완성용 전체 태그 목록"""
+    # SELECT DISTINCT tag FROM memory_tags
+    # (optional) JOIN memories WHERE project_id = ?
+
+def get_supersede_chain(self, memory_id: str) -> list[Memory]:
+    """메모리의 전체 supersede 히스토리 (역방향 추적)"""
+    # 현재 메모리 → superseded_by로 과거 추적
+    # + WHERE superseded_by = :current_id 로 미래 추적
+
+def get_dashboard_stats(self) -> dict:
+    """대시보드 개요용 집계 통계"""
+    # total_projects, total_memories, active_projects,
+    # memories_by_source, stale_project_count
+```
+
+#### A-3: server.py에 API 마운트
+
+```python
+# server.py _run_http() 수정:
+# 기존 Starlette 앱에 /api 라우트 추가
+
+from muninn.api import create_api_routes
+
+api_routes = create_api_routes(_get_store())
+
+# Bearer 모드:
+app = Starlette(
+    routes=[
+        Mount("/api", routes=api_routes),  # ← 추가
+        Mount("/", app=mcp_asgi),
+    ],
+    middleware=[Middleware(BearerTokenMiddleware, api_key=api_key)],
+    lifespan=lifespan,
+)
+```
+
+**CORS 설정 필요:** Next.js 개발 서버 (localhost:3000) → Muninn API (localhost:8000) 크로스 오리진.
+Starlette CORSMiddleware 추가.
+
+#### A-4: 테스트
 
 ```
-web/                          ← 새 디렉터리
+tests/
+  test_api.py    ← 신규: REST 엔드포인트 단위 테스트
+                    Starlette TestClient 사용 (test_auth.py와 동일 패턴)
+```
+
+---
+
+### 단계 B: 프론트엔드 구축 (Next.js)
+
+백엔드 API가 준비된 후 진행.
+
+#### B-1: 프로젝트 스캐폴딩
+
+```
+web/                          ← 새 디렉터리 (프로젝트 루트의 서브디렉터리)
 ├── package.json
 ├── next.config.ts
 ├── tailwind.config.ts
@@ -582,7 +733,7 @@ web/                          ← 새 디렉터리
 ├── public/
 ├── src/
 │   ├── app/
-│   │   ├── layout.tsx         (Geist 폰트, 테마)
+│   │   ├── layout.tsx         (Geist 폰트, 테마, 사이드바)
 │   │   ├── page.tsx           (Dashboard)
 │   │   ├── projects/
 │   │   │   └── [name]/
@@ -609,83 +760,103 @@ web/                          ← 새 디렉터리
 │   │       ├── freshness-indicator.tsx
 │   │       └── char-budget-bar.tsx
 │   ├── lib/
-│   │   ├── api.ts             (Muninn HTTP API 클라이언트)
-│   │   ├── store.ts           (Zustand 상태)
-│   │   └── utils.ts
+│   │   ├── api.ts             (Muninn REST API 클라이언트 — fetch + Bearer token)
+│   │   ├── store.ts           (Zustand 상태 관리)
+│   │   ├── types.ts           (Project, Memory TypeScript 인터페이스)
+│   │   └── utils.ts           (relative-time, truncate 등)
 │   └── styles/
 │       └── globals.css        (디자인 토큰)
-└── .env.local                 (MUNINN_API_URL, MUNINN_API_KEY)
+└── .env.local                 (NEXT_PUBLIC_MUNINN_API_URL, MUNINN_API_KEY)
 ```
 
-### Step 2: 디자인 시스템 + 레이아웃 (Day 2)
+#### B-2: 구현 순서
 
-- [ ] shadcn/ui 초기화 (`npx shadcn@latest init`)
-- [ ] Geist 폰트 설치 (`geist` npm 패키지)
-- [ ] 디자인 토큰 → globals.css
-- [ ] 사이드바 레이아웃 (collapsible)
-- [ ] 헤더 + Command Palette (shadcn Command)
-- [ ] Dark/Light 모드 토글
+**Phase B-2a: 기반** (디자인 시스템 + 레이아웃 + API 클라이언트)
+- [ ] `npx create-next-app@latest web --typescript --tailwind --app`
+- [ ] shadcn/ui 초기화, Geist 폰트, 디자인 토큰 → globals.css
+- [ ] `lib/types.ts` — Project, Memory, Stats TypeScript 인터페이스 (Python dataclass 미러)
+- [ ] `lib/api.ts` — fetch wrapper (Bearer token, error handling, base URL)
+- [ ] 사이드바 레이아웃 (collapsible) + 헤더 + Dark/Light 토글
+- [ ] Command Palette 셸 (shadcn Command + cmdk)
 
-### Step 3: API 클라이언트 (Day 3)
+**Phase B-2b: 핵심 페이지** (읽기 중심)
+- [ ] Dashboard — stat 카드 (`/api/stats`) + 프로젝트 리스트 (`/api/projects`)
+- [ ] Project Detail — 메모리 테이블 (`/api/projects/:id/memories`) + depth 필터 + 태그 필터
+- [ ] Search — FTS 검색 (`/api/search`) + 프로젝트/태그 필터
+- [ ] Memory Detail — 콘텐츠 뷰 + supersede 체인 (`/api/memories/:id/chain`)
 
-- [ ] Muninn HTTP API 타입 정의 (TypeScript)
-- [ ] fetch wrapper (Bearer token auth)
-- [ ] React Query hooks: `useProjects`, `useMemories`, `useSearch`
-- [ ] 에러 핸들링 + 로딩 상태
-
-### Step 4: 핵심 페이지 구현 (Day 4-6)
-
-- [ ] Dashboard — 통계 카드 + 프로젝트 리스트
-- [ ] Project Detail — 메모리 테이블 + 필터 + depth 토글
-- [ ] Memory Detail — 콘텐츠 뷰 + 인라인 편집 + supersede 체인
-- [ ] Search — 전역 FTS 검색 결과
-- [ ] Bulk 관리 — 멀티 셀렉트 + 일괄 삭제/태그
-
-### Step 5: 인터랙션 + 폴리시 (Day 7)
-
+**Phase B-2c: CRUD + 인터랙션** (쓰기 + 폴리시)
+- [ ] 인라인 편집 (content, depth, tags) → `PATCH /api/memories/:id`
+- [ ] 상태 토글 → `PATCH /api/projects/:id`
+- [ ] Save 다이얼로그 → `POST /api/memories`
+- [ ] Bulk 선택 + 삭제 → `DELETE /api/memories/:id` (다중)
 - [ ] Cmd+K 커맨드 팔레트 (검색, 네비게이션, 액션)
-- [ ] 키보드 단축키 (j/k 네비게이션, e 편집, d 삭제)
-- [ ] Toast 알림 (저장/삭제 확인)
-- [ ] 반응형 (모바일에서도 사용 가능)
-- [ ] 애니메이션 (페이지 전환, 리스트 갱신)
-
-### Step 6: 통합 + 배포 (Day 8)
-
-- [ ] Docker 통합 (Next.js + Muninn 서버 함께 실행)
-- [ ] 프록시 설정 (Next.js → Muninn HTTP API)
-- [ ] README 업데이트
-- [ ] E2E 테스트 (Playwright)
+- [ ] 키보드 단축키 (j/k, e, d, Enter, Esc)
+- [ ] Toast 알림, 로딩 상태
 
 ---
 
-## 6. API 연동 설계
+### 단계 C: 통합 + 배포
 
-Muninn의 기존 MCP 도구를 HTTP API로 활용:
+- [ ] Next.js `rewrites` 또는 프록시로 `/api/*` → Muninn 서버 연결
+- [ ] Docker 통합 (docker-compose에 `web` 서비스 추가)
+- [ ] CORS 설정 정리 (프로덕션: 같은 도메인, 개발: localhost:3000 허용)
+- [ ] README 업데이트 (대시보드 셋업 가이드)
+- [ ] E2E 테스트 (Playwright — 프로젝트 생성 → 메모리 저장 → 검색 → 삭제 플로우)
 
-| Dashboard 기능 | MCP Tool | HTTP Endpoint |
-|---------------|----------|---------------|
-| 프로젝트 목록 | `muninn_status` | `POST /mcp` (tool call) |
-| 프로젝트 상세 | `muninn_recall` | `POST /mcp` (tool call) |
-| 메모리 검색 | `muninn_search` | `POST /mcp` (tool call) |
-| 메모리 저장 | `muninn_save` | `POST /mcp` (tool call) |
-| 메모리 편집 | `muninn_manage` (update) | `POST /mcp` (tool call) |
-| 메모리 삭제 | `muninn_manage` (delete) | `POST /mcp` (tool call) |
-| 상태 변경 | `muninn_manage` (set_status) | `POST /mcp` (tool call) |
-| 프로젝트 생성 | `muninn_manage` (create) | `POST /mcp` (tool call) |
-| GitHub 동기화 | `muninn_sync` | `POST /mcp` (tool call) |
+---
 
-**대안 고려:** MCP Streamable HTTP를 직접 호출하는 것이 복잡할 경우, 별도의 REST API 레이어를 `server.py`에 추가하는 것도 검토. `store.py`를 직접 임포트하면 더 간단한 JSON API 구축 가능.
+## 6. REST API 상세 설계
+
+### 직렬화 규칙
+
+```python
+# Frozen dataclass → JSON 변환 규칙:
+from dataclasses import asdict
+
+def project_to_json(p: Project) -> dict:
+    d = asdict(p)
+    # tags는 tuple → list 변환 (JSON 호환)
+    return d
+
+def memory_to_json(m: Memory) -> dict:
+    d = asdict(m)
+    d["tags"] = list(m.tags)          # tuple → list
+    d["short_id"] = m.id[:8]          # prefix 표시용
+    d["depth_label"] = {0: "summary", 1: "context", 2: "detailed", 3: "full"}[m.depth]
+    return d
+```
+
+### 인증
+
+대시보드 API는 기존 Bearer token (`MUNINN_API_KEY`)을 재사용.
+- 프론트엔드 → `Authorization: Bearer <key>` 헤더
+- `.env.local`에 `MUNINN_API_KEY` 저장
+- 기존 `BearerTokenMiddleware`가 `/api/*` 포함 전체 커버
+
+### 에러 응답 형식
+
+```json
+{
+  "error": "Project 'xyz' not found",
+  "code": "NOT_FOUND"
+}
+```
+
+HTTP status: 400 (bad request), 404 (not found), 500 (server error)
 
 ---
 
 ## 7. 리스크 & 미결 사항
 
-| 리스크 | 대응 |
-|-------|------|
-| MCP Streamable HTTP가 대시보드 API로 적합한지 | 프로토타입 단계에서 검증. 필요시 REST wrapper 추가 |
-| Next.js가 Python 프로젝트에 맞는지 | `web/` 서브디렉터리로 분리. Docker multi-service로 배포 |
-| 실시간 업데이트 필요성 | Phase 3 v1은 폴링. v2에서 SSE/WebSocket 고려 |
-| 인증 통합 | 기존 Bearer token (`MUNINN_API_KEY`) 재사용 |
+| 리스크 | 심각도 | 대응 |
+|-------|-------|------|
+| Next.js + Python 이종 스택 복잡도 | 중 | `web/` 서브디렉터리 격리. Docker multi-service. 개발 시 2개 터미널 (`muninn --transport http` + `npm run dev`) |
+| REST API 추가가 MCP 도구와 중복 | 낮 | REST는 대시보드 전용. MCP 도구는 LLM 전용. 같은 store.py 사용하므로 로직 중복 없음 |
+| 실시간 업데이트 필요성 | 낮 | v1은 폴링 (5초 간격). v2에서 SSE 고려. 솔로 빌더이므로 동시 편집 이슈 없음 |
+| CORS 보안 | 낮 | 개발: `localhost:3000` 허용. 프로덕션: 같은 도메인 또는 ngrok 터널 |
+| 프론트엔드 빌드 크기 | 낮 | shadcn/ui는 tree-shakeable. 대시보드는 인증 뒤에 있어 초기 로드 중요도 낮음 |
+| Starlette REST API 테스트 커버리지 | 중 | `test_api.py` 작성 필수. `test_auth.py`와 동일한 TestClient 패턴 활용 |
 
 ---
 
