@@ -846,12 +846,12 @@ Instead of hard delete, old memories point to their replacement via `superseded_
 
 #### 3A: Automated (Claude can do independently)
 
-| # | Item | Description | Estimate |
-|---|------|-------------|----------|
-| 1 | **Memory Control Dashboard** | React + Vite web UI: project tree, memory CRUD, tag filter, status toggle, supersede chain visualization (상세 아래) | ~2 days |
-| 2 | **Semantic search** | sqlite-vec + all-MiniLM-L6-v2 embedding search as fallback when FTS5 misses | ~1 day |
-| 3 | **Docker distribution** | Dockerfile + docker-compose for pre-configured HTTP transport | ~2hr |
-| 4 | **Awesome MCP Servers PR** | Submit PR to awesome-mcp-servers list | ~30min |
+| # | Item | Description | Status |
+|---|------|-------------|--------|
+| 1 | **Memory Control Dashboard** | React + Vite web UI: project tree, memory CRUD, tag filter, status toggle, supersede chain visualization (상세 아래) | Planned |
+| 2 | **Semantic search** | sqlite-vec + all-MiniLM-L6-v2 embedding search as fallback when FTS5 misses | Planned |
+| 3 | **Docker distribution** | Dockerfile + docker-compose for pre-configured HTTP transport | ✅ Done |
+| 4 | **Awesome MCP Servers** | Submit to mcpservers.org + punkpeye/awesome-mcp-servers | 📝 Draft ready |
 
 #### 3B: Collaborative (requires user)
 
