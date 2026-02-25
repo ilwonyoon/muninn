@@ -1,17 +1,19 @@
-[
-  {
-    "name": "Muninn Dashboard",
-    "type": "url",
-    "url": "http://localhost:3000",
-    "command": "cd web && npx next dev --port 3000",
-    "env": {},
-    "timeout": 10000
-  },
-  {
-    "name": "Muninn API",
-    "type": "shell",
-    "command": "python3 -m muninn.server --transport http --port 8000",
-    "env": {},
-    "timeout": 5000
-  }
-]
+{
+  "version": "0.0.1",
+  "autoVerify": true,
+  "configurations": [
+    {
+      "name": "muninn-api",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "muninn.server", "--transport", "http", "--port", "8000"],
+      "port": 8000
+    },
+    {
+      "name": "muninn-dashboard",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["next", "dev", "--port", "3000"],
+      "cwd": "web",
+      "port": 3000
+    }
+  ]
+}
