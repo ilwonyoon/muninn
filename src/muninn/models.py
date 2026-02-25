@@ -134,6 +134,7 @@ class Memory:
     source: str = MemorySource.CONVERSATION
     tags: tuple[str, ...] = field(default_factory=tuple)
     superseded_by: str | None = None
+    parent_memory_id: str | None = None
 
     def __post_init__(self) -> None:
         validate_memory_depth(self.depth)

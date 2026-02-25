@@ -193,6 +193,7 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
                 depth=depth,
                 source=body.get("source", "manual"),
                 tags=body.get("tags"),
+                parent_memory_id=body.get("parent_memory_id"),
             )
         except ValueError as exc:
             return JSONResponse(
@@ -223,6 +224,8 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
                 )
         if "tags" in body:
             kwargs["tags"] = body["tags"]
+        if "parent_memory_id" in body:
+            kwargs["parent_memory_id"] = body["parent_memory_id"]
         if not kwargs:
             return JSONResponse(
                 {"error": "No valid fields to update", "code": "BAD_REQUEST"},
@@ -299,6 +302,30 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
         return JSONResponse([_memory_to_dict(m) for m in chain])
 
     # ------------------------------------------------------------------
+    # Graph
+    # ------------------------------------------------------------------
+
+    async def get_memory_graph(request: Request) -> JSONResponse:
+        project_id = request.path_params["project_id"]
+        project = store.get_project(project_id)
+        if project is None:
+            return JSONResponse(
+                {"error": f"Project '{project_id}' not found", "code": "NOT_FOUND"},
+                status_code=404,
+            )
+        memories = store.get_memory_graph(project_id)
+        nodes = [_memory_to_dict(m) for m in memories]
+        edges = []
+        for m in memories:
+            if m.parent_memory_id:
+                edges.append({
+                    "id": f"e-{m.parent_memory_id[:8]}-{m.id[:8]}",
+                    "source": m.parent_memory_id,
+                    "target": m.id,
+                })
+        return JSONResponse({"nodes": nodes, "edges": edges})
+
+    # ------------------------------------------------------------------
     # Route table
     # ------------------------------------------------------------------
 
@@ -308,6 +335,7 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
         Route("/projects/{project_id}", get_project, methods=["GET"]),
         Route("/projects/{project_id}", update_project, methods=["PATCH"]),
         Route("/projects/{project_id}/memories", list_memories, methods=["GET"]),
+        Route("/projects/{project_id}/graph", get_memory_graph, methods=["GET"]),
         Route("/memories", create_memory, methods=["POST"]),
         Route("/memories/{memory_id}", get_memory, methods=["GET"]),
         Route("/memories/{memory_id}", update_memory, methods=["PATCH"]),

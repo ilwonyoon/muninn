@@ -120,30 +120,18 @@ def _create_mcp(
     return mcp
 
 
-def _create_api_mount(store: MuninnStore, api_key: str | None = None):
+def _create_api_mount(store: MuninnStore):
     """Create the /api Mount with dashboard REST routes.
 
-    When *api_key* is provided, the mount is wrapped with Bearer token
-    authentication middleware so the dashboard API is never exposed
-    without credentials.
+    Dashboard API routes are always unauthenticated — they are local-only
+    and consumed by the Next.js frontend proxy.  MCP endpoints carry their
+    own Bearer token middleware separately.
     """
-    from starlette.applications import Starlette
-    from starlette.middleware import Middleware
     from starlette.routing import Mount
 
     from muninn.api import create_api_routes
 
     api_routes = create_api_routes(store)
-
-    if api_key:
-        from muninn.auth import BearerTokenMiddleware
-
-        api_app = Starlette(
-            routes=api_routes,
-            middleware=[Middleware(BearerTokenMiddleware, api_key=api_key)],
-        )
-        return Mount("/api", app=api_app)
-
     return Mount("/api", routes=api_routes)
 
 
@@ -157,7 +145,7 @@ def _run_http(mcp: FastMCP, host: str, port: int, store: MuninnStore) -> None:
     import uvicorn
 
     api_key = os.environ.get("MUNINN_API_KEY")
-    api_mount = _create_api_mount(store, api_key=api_key)
+    api_mount = _create_api_mount(store)
 
     if api_key:
         from muninn.auth import create_authenticated_app

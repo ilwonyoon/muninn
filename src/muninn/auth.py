@@ -27,6 +27,10 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
+        # Dashboard REST API routes are local-only, skip auth.
+        if request.url.path.startswith("/api/"):
+            return await call_next(request)
+
         auth_header = request.headers.get("authorization", "")
 
         if not auth_header.startswith("Bearer "):

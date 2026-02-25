@@ -17,7 +17,7 @@ from muninn.models import Memory, MemorySource, Project, ProjectStatus, validate
 _DEFAULT_DB_DIR = os.path.join(os.path.expanduser("~"), ".local", "share", "muninn")
 _DEFAULT_DB_NAME = "muninn.db"
 
-_CURRENT_SCHEMA_VERSION = 3
+_CURRENT_SCHEMA_VERSION = 4
 
 _SCHEMA_SQL = """\
 PRAGMA journal_mode=WAL;
@@ -133,6 +133,7 @@ def _row_to_memory(row: sqlite3.Row, *, tags: tuple[str, ...] | None = None) -> 
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         tags=tags if tags is not None else (),
+        parent_memory_id=row["parent_memory_id"] if "parent_memory_id" in row.keys() else None,
     )
 
 
@@ -229,6 +230,23 @@ class MuninnStore:
             except Exception:
                 pass  # Column already exists (fresh v3 schema).
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (3)")
+
+        # v4: add parent_memory_id column.
+        # Also repairs state where version was bumped to 4 but column is missing
+        # (caused by a bug in a prior _SCHEMA_SQL that inserted version 4 eagerly).
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()}
+        if current_version < 4 or "parent_memory_id" not in cols:
+            if "parent_memory_id" not in cols:
+                try:
+                    conn.execute(
+                        "ALTER TABLE memories ADD COLUMN parent_memory_id TEXT DEFAULT NULL"
+                    )
+                except Exception:
+                    pass  # Column already exists.
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memories_parent ON memories(parent_memory_id)"
+            )
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (4)")
 
     # ------------------------------------------------------------------
     # Project operations
@@ -385,6 +403,7 @@ class MuninnStore:
         depth: int = 1,
         source: str = MemorySource.CONVERSATION,
         tags: list[str] | tuple[str, ...] | None = None,
+        parent_memory_id: str | None = None,
     ) -> Memory:
         """Create a new memory and return it.
 
@@ -406,10 +425,10 @@ class MuninnStore:
             with conn:
                 conn.execute(
                     """
-                    INSERT INTO memories (id, project_id, content, depth, source, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO memories (id, project_id, content, depth, source, parent_memory_id, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (memory_id, project_id, content, depth, source, now, now),
+                    (memory_id, project_id, content, depth, source, parent_memory_id, now, now),
                 )
 
                 for tag in tag_list:
@@ -433,6 +452,7 @@ class MuninnStore:
             source=source,
             tags=tuple(tag_list),
             superseded_by=None,
+            parent_memory_id=parent_memory_id,
             created_at=now,
             updated_at=now,
         )
@@ -651,6 +671,7 @@ class MuninnStore:
         content: str | None = None,
         depth: int | None = None,
         tags: list[str] | tuple[str, ...] | None = None,
+        parent_memory_id: str | None = ...,
     ) -> "Memory | None":
         """Update an existing memory's content, depth, and/or tags.
 
@@ -685,6 +706,8 @@ class MuninnStore:
                     from muninn.models import validate_memory_depth
                     validate_memory_depth(depth)
                     updates["depth"] = depth
+                if parent_memory_id is not ...:
+                    updates["parent_memory_id"] = parent_memory_id
 
                 set_clause = ", ".join(f"{col} = ?" for col in updates)
                 values = list(updates.values()) + [memory_id]
@@ -765,6 +788,30 @@ class MuninnStore:
         finally:
             conn.close()
         return _row_to_memory(row, tags=tags)
+
+    def get_memory_graph(self, project_id: str) -> list[Memory]:
+        """Return all active memories for a project (no char budget).
+
+        Used by the graph view which needs every node regardless of size.
+        """
+        conn = self._get_connection()
+        try:
+            rows = conn.execute(
+                """
+                SELECT * FROM memories
+                WHERE project_id = ? AND superseded_by IS NULL
+                ORDER BY depth ASC, updated_at DESC
+                """,
+                (project_id,),
+            ).fetchall()
+            memory_ids = [r["id"] for r in rows]
+            tags_map = _fetch_tags_for_memories(conn, memory_ids)
+        finally:
+            conn.close()
+        return [
+            _row_to_memory(r, tags=tags_map.get(r["id"], ()))
+            for r in rows
+        ]
 
     def get_depth_distribution(self, project_id: str) -> dict[int, int]:
         """Return depth → count mapping for active memories in a project."""
