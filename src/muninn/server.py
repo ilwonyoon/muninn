@@ -32,17 +32,45 @@ from muninn.tools import (
     muninn_save,
     muninn_search,
     muninn_status,
+    muninn_sync,
 )
 
 _INSTRUCTIONS = (
     "Muninn is persistent project memory for AI assistants. "
-    "When saving, ALWAYS choose depth carefully: "
-    "0='What is this?' (project summary, create FIRST), "
-    "1='To continue' (resume next session, default), "
-    "2='To go deeper' (detailed analysis), "
-    "3='Just in case' (archive/logs). "
-    "Keep depth 0-1 memories short (200-500 chars), one topic each. "
-    "These depth meanings work for ANY project type: app, content, research, etc."
+    "\n\n"
+    "## When to use Muninn\n"
+    "- SESSION START: Call muninn_recall immediately when the user mentions a project. "
+    "Do not wait for explicit instruction — if a project name appears, recall it.\n"
+    "- AFTER SIGNIFICANT WORK: Save key decisions, conclusions, and state before the session ends.\n"
+    "- NEVER save raw conversation. Always distill: extract the decision or fact, discard the dialog.\n"
+    "\n"
+    "## Depth selection (works for any project type)\n"
+    "depth=0  'What is this?'  — 2-3 sentence project summary. "
+    "Create this FIRST for every new project. Max 300 chars. Always loaded.\n"
+    "depth=1  'To continue'    — What's needed to resume next session: current direction, "
+    "key decisions, open questions. 200-400 chars each, one topic per memory. DEFAULT depth.\n"
+    "depth=2  'To go deeper'   — Detailed analysis, full research, implementation plans. "
+    "Only when user asks to dive into specifics.\n"
+    "depth=3  'Just in case'   — Archives, old versions, raw logs. Rarely loaded.\n"
+    "\n"
+    "## Depth examples\n"
+    "depth=0: 'Muninn: MCP memory server in Python/SQLite. Provides 5 tools for save/recall/search.'\n"
+    "depth=1: 'Decided to use FTS5 triggers over manual sync. WAL mode for concurrent access.'\n"
+    "depth=1: 'Open: OAuth flow needs testing on mobile. Auth middleware incomplete.'\n"
+    "depth=2: 'Full schema design with junction table for tags, migration strategy for v2...'\n"
+    "depth=3: 'Raw benchmark results from 2024-01 load test...'\n"
+    "\n"
+    "## Tag usage\n"
+    "Tags make memories filterable. Always tag memories with relevant categories.\n"
+    "Examples: ['decision', 'architecture'], ['bug', 'auth'], ['todo', 'api'], "
+    "['research', 'performance'], ['milestone', 'shipped']\n"
+    "Use 1-3 tags per memory. Prefer nouns and states over verbs.\n"
+    "\n"
+    "## Save quality rules\n"
+    "- One memory per topic. Split unrelated facts into separate saves.\n"
+    "- Depth 0-1 must be skimmable in under 5 seconds. Cut anything redundant.\n"
+    "- Prefer concrete over vague: 'Using hatchling, not setuptools' beats 'build system chosen'.\n"
+    "- Update stale memories with muninn_manage update_memory rather than adding duplicates.\n"
 )
 
 
@@ -133,6 +161,7 @@ def _create_mcp(
     mcp.tool()(muninn_search)
     mcp.tool()(muninn_status)
     mcp.tool()(muninn_manage)
+    mcp.tool()(muninn_sync)
     return mcp
 
 

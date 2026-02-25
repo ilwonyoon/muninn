@@ -7,6 +7,10 @@ server.py.  The module-level ``_store`` is initialised once at startup via
 
 from __future__ import annotations
 
+import json
+import os
+import urllib.error
+from datetime import datetime, timezone
 from typing import Literal
 
 from muninn.formatter import (
@@ -39,6 +43,34 @@ def _get_store() -> MuninnStore:
     return _store
 
 
+def _log_usage(
+    tool: str,
+    project: str | None = None,
+    depth: int | None = None,
+) -> None:
+    """Append a usage log entry to ~/.local/share/muninn/usage.jsonl.
+
+    Fails silently — logging must never break tool functionality.
+    """
+    try:
+        data_dir = os.environ.get(
+            "MUNINN_DATA_DIR",
+            os.path.expanduser("~/.local/share/muninn"),
+        )
+        os.makedirs(data_dir, exist_ok=True)
+        log_path = os.path.join(data_dir, "usage.jsonl")
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "tool": tool,
+            "project": project,
+            "depth": depth,
+        }
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
@@ -50,30 +82,42 @@ def muninn_save(
     depth: int = 1,
     tags: tuple[str, ...] | list[str] | None = None,
 ) -> str:
-    """Save important information to a project's memory.
+    """Save a distilled memory to a project. Auto-creates the project if it does not exist.
 
-    Distill conversation into structured, reusable context.
-    Do NOT save raw conversation — summarize into key points.
+    CONTENT QUALITY — never save raw conversation. Always distill:
+      Bad:  "User said they want SQLite and I suggested WAL mode and they agreed"
+      Good: "Storage: SQLite with WAL mode. Chosen for zero-dependency local deploy."
 
-    Depth guide — works for ANY project type (app, content, research, etc.):
-      depth=0  "What is this?"    — Grasp the project in 10 seconds.
-                                    Max 3 sentences. Always loaded on recall.
-                                    Create this FIRST for every new project.
-      depth=1  "To continue"      — What you need to resume work next session.
-                                    Key decisions, current direction, open questions.
-                                    200-500 chars each. One memory per topic.
-      depth=2  "To go deeper"     — Details needed when diving into a specific area.
-                                    Deep analysis, full research, detailed plans.
-                                    Loaded only when explicitly requested.
-      depth=3  "Just in case"     — Archive and reference. Raw data, old versions,
-                                    logs. Rarely loaded.
+    DEPTH — pick based on when this memory needs to surface:
+      depth=0  "What is this?"  — 2-3 sentence project identity. Create FIRST for any new
+                                  project. Max 300 chars. Always loaded on every recall.
+                                  Example: "Muninn: Python MCP memory server. SQLite + FTS5.
+                                  5 tools: save/recall/search/status/manage."
+      depth=1  "To continue"    — What's needed to resume next session: current direction,
+                                  key decisions, open questions. 200-400 chars each.
+                                  One topic per memory. Use this depth by DEFAULT.
+                                  Example: "Auth: OAuth 2.0 via MUNINN_OWNER_PASSWORD.
+                                  Bearer token fallback via MUNINN_API_KEY. Mobile untested."
+      depth=2  "To go deeper"   — Full analysis, research findings, detailed implementation
+                                  plans. Loaded only when user asks to dive into specifics.
+                                  Example: complete schema design, benchmark data, RFC notes.
+      depth=3  "Just in case"   — Raw logs, old versions, archived data. Rarely needed.
 
-    Best practices:
-      - Always create a depth=0 summary first for new projects.
-      - Keep each memory focused on ONE topic (don't combine unrelated info).
-      - Prefer multiple short memories over one long memory.
-      - Tag memories for easy filtering later.
+    TAGS — always set 1-3 tags per memory to enable later filtering:
+      Decisions:    ['decision', 'architecture'] or ['decision', 'api']
+      Bugs/issues:  ['bug', 'auth'] or ['bug', 'performance']
+      Pending work: ['todo', 'api'] or ['todo', 'testing']
+      Research:     ['research', 'benchmarks'] or ['research', 'ux']
+      Milestones:   ['milestone', 'shipped'] or ['milestone', 'v1']
+      Config/infra: ['config', 'infra'] or ['config', 'deploy']
+
+    RULES:
+      - One topic per memory. Split unrelated facts into separate muninn_save calls.
+      - Depth 0-1 must be skimmable in under 5 seconds — cut anything redundant.
+      - Prefer concrete over vague: 'Using hatchling' beats 'build system chosen'.
+      - Update stale memories via muninn_manage update_memory instead of adding duplicates.
     """
+    _log_usage("muninn_save", project=project, depth=depth)
     try:
         store = _get_store()
 
@@ -108,19 +152,29 @@ def muninn_recall(
 ) -> str:
     """Load project context from Muninn memory.
 
-    Call this at session start or when the user mentions a project.  If no
-    project specified, loads all active projects.
+    WHEN TO CALL:
+      - Session start: call immediately when the user mentions any project by name.
+        Do not wait to be asked — proactive recall prevents re-explaining context.
+      - Switching focus: call when the conversation shifts to a different project.
+      - After search: call after muninn_search to load full context for a found project.
 
-    Depth controls how much to load:
-      depth=0  — "What is this?" summaries only (quick project overview)
-      depth=1  — Above + "To continue" context (default, resume work)
-      depth=2  — Above + "To go deeper" details (dive into specifics)
-      depth=3  — Everything including archives (rarely needed)
+    DEPTH — controls how much to load (cumulative, each level includes all above):
+      depth=0  — "What is this?" only. Quick project identity, always 1-2 sentences.
+                 Use when you just need to know if a project exists.
+      depth=1  — Above + "To continue" memories. Resumes work from last session.
+                 DEFAULT. Use this at session start for any active project.
+      depth=2  — Above + "To go deeper" details. Full analysis and research.
+                 Use when the user explicitly asks to dive into a specific area.
+      depth=3  — Everything including archives. Rarely needed.
 
-    max_chars limits total output to avoid flooding the context window.
-    Memories are loaded lowest-depth-first, newest-first within each depth.
-    If the budget is exceeded, deeper/older memories are dropped.
+    If no project is specified, loads all active projects (useful at session start
+    when you don't yet know which project the user will work on).
+
+    max_chars caps total output to protect context window. Memories load
+    lowest-depth-first, newest-first within each depth. If the budget is hit,
+    deeper and older memories are dropped silently.
     """
+    _log_usage("muninn_recall", project=project, depth=depth)
     try:
         store = _get_store()
 
@@ -152,11 +206,28 @@ def muninn_search(
     tags: list[str] | None = None,
     limit: int = 50,
 ) -> str:
-    """Search across all project memories by keyword.
+    """Full-text search across project memories by keyword or phrase.
 
-    Use when the user asks about a specific topic or wants to find a previously
-    saved memory.
+    USE SEARCH WHEN:
+      - The user asks about a specific topic and you don't know which project it's in.
+      - You need to find a particular decision, bug, or fact by keyword.
+      - You want to check if something was already saved before saving a duplicate.
+      - The user asks "did we decide..." or "what did we say about...".
+
+    USE RECALL INSTEAD WHEN:
+      - You know the project name and want full session context — recall is faster.
+      - Session just started and you want everything for a project (use muninn_recall).
+
+    Narrows results with optional filters:
+      project — limit to one project's memories
+      tags    — filter to memories with specific tags (e.g. ['decision', 'bug'])
+      limit   — max memories returned (default 50, lower for faster scans)
+
+    Results are ranked by FTS5 relevance. Inspect the project field on each result
+    to identify which project owns the memory, then call muninn_recall on that
+    project if you need full context.
     """
+    _log_usage("muninn_search", project=project)
     try:
         store = _get_store()
 
@@ -174,10 +245,18 @@ def muninn_search(
 
 
 def muninn_status() -> str:
-    """Show all projects with their status, last update time, and memory count.
+    """List all projects with status, memory count, and last update time.
 
-    Use when the user asks about their projects or what they're working on.
+    USE WHEN:
+      - The user asks "what projects do I have?" or "what am I working on?".
+      - You want a quick inventory before deciding which project to recall.
+      - The user wants to review or clean up stale/archived projects.
+
+    Returns one line per project with: id, status (active/paused/idea/archived),
+    memory count, and last updated timestamp. Does not load memory content —
+    call muninn_recall on a specific project for that.
     """
+    _log_usage("muninn_status")
     try:
         store = _get_store()
         projects = store.list_projects()
@@ -195,12 +274,42 @@ def muninn_manage(
     field: str | None = None,
     value: str | None = None,
 ) -> str:
-    """Manage projects and memories.
+    """Manage projects and memories: update, delete, or change status.
 
-    Actions: set_status (active/paused/idea/archived), delete_memory,
-    update_memory (field: content/depth, or tags via value as comma-separated),
-    update_project (field: summary/github_repo/name), create_project.
+    ACTIONS:
+
+    set_status — Change a project's lifecycle status.
+      Required: status = one of: active | paused | idea | archived
+      Use 'paused' for projects on hold, 'archived' for completed/abandoned.
+      Example: action="set_status", project="muninn", status="paused"
+
+    delete_memory — Permanently remove a single memory by ID.
+      Required: memory_id (full UUID from recall/search output)
+      Use when a memory is stale, wrong, or superseded and update won't help.
+      Example: action="delete_memory", project="muninn", memory_id="abc123..."
+
+    update_memory — Edit an existing memory in place.
+      Required: memory_id
+      Optional: field = content | depth | tags
+        field="content", value="new text"           — rewrite the memory
+        field="depth", value="2"                    — change depth level
+        field="tags", value="decision,architecture" — replace all tags (comma-separated)
+      Prefer this over delete + re-save to preserve memory history.
+      Example: action="update_memory", project="muninn", memory_id="abc123...",
+               field="content", value="Auth: switched to API key only. OAuth removed."
+
+    update_project — Edit project metadata.
+      Required: field = name | summary | github_repo
+      Required: value = new field value
+      Example: action="update_project", project="muninn", field="name", value="Muninn v2"
+
+    create_project — Explicitly create a project with a display name.
+      Optional: value = display name (defaults to project id if omitted)
+      Note: muninn_save auto-creates projects, so only use this when you want
+      to set a specific display name upfront before saving any memories.
+      Example: action="create_project", project="myapp", value="My App"
     """
+    _log_usage("muninn_manage", project=project)
     try:
         store = _get_store()
 
@@ -290,3 +399,78 @@ def muninn_manage(
 
     except Exception as exc:
         return f"Error in manage ({action}): {exc}"
+
+
+def muninn_sync(project: str) -> str:
+    """Sync a project's GitHub repository data into Muninn memory.
+
+    Fetches recent commits, open issues, and open PRs from the linked GitHub
+    repo and saves a structured summary as a depth-1 memory with
+    source='github'.  Previous GitHub sync memories are automatically
+    superseded.
+
+    The project must have a ``github_repo`` field set (e.g. ``owner/repo``).
+    Use ``muninn_manage(action='update_project', field='github_repo', ...)``
+    to link a repo first.
+
+    Authentication: set the ``GITHUB_TOKEN`` environment variable for private
+    repos or to avoid rate limits.
+    """
+    _log_usage("muninn_sync", project=project)
+    try:
+        store = _get_store()
+
+        proj = store.get_project(project)
+        if proj is None:
+            return (
+                f"Error: project '{project}' not found. "
+                "Create it first with muninn_save or muninn_manage."
+            )
+
+        if not proj.github_repo:
+            return (
+                f"Error: project '{project}' has no linked GitHub repository. "
+                "Set one with: muninn_manage(action='update_project', "
+                f"project='{project}', field='github_repo', value='owner/repo')"
+            )
+
+        from muninn.github_sync import sync_github
+
+        result = sync_github(
+            store=store,
+            project_id=project,
+            github_repo=proj.github_repo,
+        )
+
+        parts: list[str] = [
+            f"Synced {proj.github_repo} into {project}",
+            f"  Commits: {len(result.commits)}",
+            f"  Issues: {len(result.issues)}",
+            f"  PRs: {len(result.pull_requests)}",
+            f"  Memory: {result.memory_id[:8]}",
+        ]
+        if result.superseded_ids:
+            parts.append(
+                f"  Superseded: {len(result.superseded_ids)} previous sync(s)"
+            )
+
+        return f"\u2705 {chr(10).join(parts)}"
+
+    except urllib.error.HTTPError as exc:
+        if exc.code == 403:
+            return (
+                "Error: GitHub API rate limit exceeded or access denied. "
+                "Set GITHUB_TOKEN environment variable for authentication."
+            )
+        if exc.code == 404:
+            return (
+                f"Error: GitHub repository '{proj.github_repo}' not found. "
+                "Check the owner/repo format and repository visibility."
+            )
+        return f"Error syncing GitHub: HTTP {exc.code} — {exc.reason}"
+
+    except urllib.error.URLError as exc:
+        return f"Error syncing GitHub: network error — {exc.reason}"
+
+    except Exception as exc:
+        return f"Error syncing GitHub: {exc}"

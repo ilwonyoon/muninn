@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import os
+
 import pytest
 
 import muninn.tools as tools_module
@@ -495,3 +498,56 @@ class TestManageUpdateProjectUnknownField:
             value="something",
         )
         assert "Error" in result
+
+
+# ---------------------------------------------------------------------------
+# Usage logging
+# ---------------------------------------------------------------------------
+
+
+class TestUsageLogging:
+    def test_usage_logging(self, initialized_store, tmp_path, monkeypatch):
+        """Calling a tool appends a valid JSON entry to usage.jsonl."""
+        monkeypatch.setenv("MUNINN_DATA_DIR", str(tmp_path))
+
+        muninn_save(project="log-test", content="Logging check", depth=1)
+
+        log_path = tmp_path / "usage.jsonl"
+        assert log_path.exists(), "usage.jsonl was not created"
+
+        lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) >= 1, "No log entries written"
+
+        entry = json.loads(lines[0])
+        assert entry["tool"] == "muninn_save"
+        assert entry["project"] == "log-test"
+        assert entry["depth"] == 1
+        assert "ts" in entry
+        # ts must be a valid ISO 8601 string
+        from datetime import datetime
+        datetime.fromisoformat(entry["ts"])  # raises if invalid
+
+    def test_usage_logging_null_project_and_depth(self, initialized_store, tmp_path, monkeypatch):
+        """muninn_status logs project=null and depth=null."""
+        monkeypatch.setenv("MUNINN_DATA_DIR", str(tmp_path))
+
+        muninn_status()
+
+        log_path = tmp_path / "usage.jsonl"
+        assert log_path.exists()
+        entry = json.loads(log_path.read_text(encoding="utf-8").strip())
+        assert entry["tool"] == "muninn_status"
+        assert entry["project"] is None
+        assert entry["depth"] is None
+
+    def test_usage_logging_appends_multiple_calls(self, initialized_store, tmp_path, monkeypatch):
+        """Multiple tool calls each append a separate log entry."""
+        monkeypatch.setenv("MUNINN_DATA_DIR", str(tmp_path))
+
+        muninn_status()
+        muninn_status()
+        muninn_status()
+
+        log_path = tmp_path / "usage.jsonl"
+        lines = log_path.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 3

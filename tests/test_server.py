@@ -80,6 +80,11 @@ class TestCreateMcp:
         assert "muninn_status" in tool_names
         assert "muninn_manage" in tool_names
 
-    def test_creates_mcp_with_five_tools(self):
+    def test_creates_mcp_with_six_tools(self):
         mcp = _create_mcp()
-        assert len(mcp._tool_manager._tools) == 5
+        assert len(mcp._tool_manager._tools) == 6
+
+    def test_creates_mcp_with_sync_tool(self):
+        mcp = _create_mcp()
+        tool_names = list(mcp._tool_manager._tools.keys())
+        assert "muninn_sync" in tool_names
