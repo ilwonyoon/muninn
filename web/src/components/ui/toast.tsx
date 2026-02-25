@@ -32,7 +32,6 @@ const Toast = React.forwardRef<
     ref={ref}
     className={cn(
       "rounded-lg border border-border bg-card px-4 py-3 text-xs text-foreground shadow-lg",
-      "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:slide-out-to-right-full data-[state=open]:slide-in-from-bottom-full",
       variant === "success" && "border-status-active/30",
       variant === "error" && "border-red-500/30",
       className

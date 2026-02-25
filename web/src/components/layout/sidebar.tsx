@@ -2,10 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Brain, LayoutDashboard, Search, Settings } from "lucide-react";
-import { listProjects } from "@/lib/api";
-import type { Project } from "@/lib/types";
+import { useProjectStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { StatusDot } from "@/components/muninn/status-dot";
 
@@ -19,13 +18,11 @@ const STATUS_LABELS: Record<string, string> = {
 
 export function Sidebar() {
   const pathname = usePathname();
-  const [projects, setProjects] = useState<Project[]>([]);
+  const { projects, fetchProjects } = useProjectStore();
 
   useEffect(() => {
-    listProjects()
-      .then(setProjects)
-      .catch(() => {});
-  }, []);
+    fetchProjects();
+  }, [fetchProjects]);
 
   const grouped = STATUS_ORDER.map((status) => ({
     status,

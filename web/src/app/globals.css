@@ -97,7 +97,7 @@ body {
   background: var(--border-hover);
 }
 
-/* Animations for dialog/toast (Radix UI data attributes) */
+/* Animations — keyed to Radix data-state attributes */
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -115,22 +115,24 @@ body {
   to { transform: translateX(100%); opacity: 0; }
 }
 
-.animate-in {
+/* Dialog / overlay fade */
+[data-state="open"][data-radix-overlay],
+[data-state="open"][data-radix-dialog-content] {
   animation: fade-in 150ms ease-out;
 }
-.animate-out {
+[data-state="closed"][data-radix-overlay],
+[data-state="closed"][data-radix-dialog-content] {
   animation: fade-out 100ms ease-in;
 }
-.fade-in-0 {
-  --tw-enter-opacity: 0;
-}
-.fade-out-0 {
-  --tw-exit-opacity: 0;
-}
-.slide-in-from-bottom-full {
+
+/* Toast: slide in from bottom on open, slide out to right on close */
+[data-radix-toast][data-state="open"] {
   animation: slide-in-from-bottom 200ms ease-out;
 }
-.slide-out-to-right-full {
+[data-radix-toast][data-state="closed"] {
+  animation: slide-out-to-right 150ms ease-in;
+}
+[data-radix-toast][data-swipe-direction="right"][data-swipe="end"] {
   animation: slide-out-to-right 150ms ease-in;
 }
 

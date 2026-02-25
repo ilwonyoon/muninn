@@ -9,8 +9,9 @@ import {
   Plus,
   Search as SearchIcon,
 } from "lucide-react";
-import { listProjects, searchMemories } from "@/lib/api";
-import type { Memory, Project } from "@/lib/types";
+import { searchMemories } from "@/lib/api";
+import { useProjectStore } from "@/lib/store";
+import type { Memory } from "@/lib/types";
 import { truncate } from "@/lib/utils";
 import { StatusDot } from "@/components/muninn/status-dot";
 import { DepthBadge } from "@/components/muninn/depth-badge";
@@ -18,9 +19,9 @@ import { DepthBadge } from "@/components/muninn/depth-badge";
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [projects, setProjects] = useState<Project[]>([]);
   const [searchResults, setSearchResults] = useState<Memory[]>([]);
   const router = useRouter();
+  const { projects, fetchProjects } = useProjectStore();
 
   // Cmd+K toggle
   useEffect(() => {
@@ -34,14 +35,14 @@ export function CommandPalette() {
     return () => document.removeEventListener("keydown", handler);
   }, []);
 
-  // Load projects when opened
+  // Refresh projects when opened
   useEffect(() => {
     if (open) {
-      listProjects().then(setProjects).catch(() => {});
+      fetchProjects();
       setQuery("");
       setSearchResults([]);
     }
-  }, [open]);
+  }, [open, fetchProjects]);
 
   // Search as you type (debounced)
   useEffect(() => {
@@ -114,7 +115,7 @@ export function CommandPalette() {
                     value={`memory-${mem.id}`}
                     onSelect={() =>
                       navigate(
-                        `/projects/${mem.project_id}?memory=${mem.short_id}`
+                        `/projects/${mem.project_id}/${mem.short_id}`
                       )
                     }
                     className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-xs text-foreground aria-selected:bg-card-hover"

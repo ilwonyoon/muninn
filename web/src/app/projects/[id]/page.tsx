@@ -23,6 +23,7 @@ import { StatusDot } from "@/components/muninn/status-dot";
 import { DepthBadge } from "@/components/muninn/depth-badge";
 import { TagPill } from "@/components/muninn/tag-pill";
 import { SaveMemoryDialog } from "@/components/muninn/save-memory-dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -32,12 +33,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAppToast } from "@/lib/toast-context";
 
-const STATUS_CYCLE: Record<string, string> = {
-  active: "paused",
-  paused: "idea",
-  idea: "archived",
-  archived: "active",
-};
+const ALL_STATUSES = ["active", "paused", "idea", "archived"] as const;
 
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
@@ -52,6 +48,8 @@ export default function ProjectDetailPage() {
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saveOpen, setSaveOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Memory | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Keyboard navigation
   const [selectedIdx, setSelectedIdx] = useState(-1);
@@ -115,7 +113,7 @@ export default function ProjectDetailPage() {
         case "d":
           if (selectedIdx >= 0 && memories[selectedIdx]) {
             e.preventDefault();
-            handleDeleteMemory(memories[selectedIdx]);
+            setDeleteTarget(memories[selectedIdx]);
           }
           break;
         case "Escape":
@@ -127,13 +125,10 @@ export default function ProjectDetailPage() {
     return () => document.removeEventListener("keydown", handler);
   }, [selectedIdx, memories, projectId, router]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleStatusToggle = async () => {
-    if (!project) return;
-    const next = STATUS_CYCLE[project.status] ?? "active";
+  const handleStatusChange = async (next: Project["status"]) => {
+    if (!project || next === project.status) return;
     try {
-      const updated = await updateProject(project.id, {
-        status: next as Project["status"],
-      });
+      const updated = await updateProject(project.id, { status: next });
       setProject(updated);
       toast({ title: `Status: ${next}`, variant: "success" });
     } catch (err) {
@@ -145,11 +140,13 @@ export default function ProjectDetailPage() {
     }
   };
 
-  const handleDeleteMemory = async (mem: Memory) => {
-    if (!confirm(`Delete memory ${mem.short_id}?`)) return;
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      await deleteMemory(mem.id);
+      await deleteMemory(deleteTarget.id);
       toast({ title: "Memory deleted", variant: "success" });
+      setDeleteTarget(null);
       fetchData();
     } catch (err) {
       toast({
@@ -157,6 +154,8 @@ export default function ProjectDetailPage() {
         description: err instanceof Error ? err.message : "Unknown error",
         variant: "error",
       });
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -184,17 +183,35 @@ export default function ProjectDetailPage() {
           <Link href="/" className="text-muted hover:text-foreground">
             <ArrowLeft className="h-4 w-4" />
           </Link>
-          <button
-            type="button"
-            onClick={handleStatusToggle}
-            title="Click to cycle status"
-          >
-            <StatusDot status={project.status} />
-          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-1.5 rounded px-1.5 py-0.5 text-xs text-muted hover:bg-card-hover hover:text-foreground"
+              >
+                <StatusDot status={project.status} />
+                <span>{project.status}</span>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              {ALL_STATUSES.map((s) => (
+                <DropdownMenuItem
+                  key={s}
+                  onSelect={() => handleStatusChange(s)}
+                  className={cn(s === project.status && "font-medium")}
+                >
+                  <StatusDot status={s} />
+                  <span className="capitalize">{s}</span>
+                  {s === project.status && (
+                    <span className="ml-auto text-[10px] text-muted">current</span>
+                  )}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
           <h1 className="text-lg font-semibold text-foreground">
             {project.id}
           </h1>
-          <span className="text-xs text-muted">{project.status}</span>
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -281,7 +298,7 @@ export default function ProjectDetailPage() {
               memory={mem}
               projectId={projectId}
               selected={selectedIdx === idx}
-              onDelete={() => handleDeleteMemory(mem)}
+              onDelete={() => setDeleteTarget(mem)}
             />
           ))}
         </div>
@@ -350,6 +367,21 @@ export default function ProjectDetailPage() {
         open={saveOpen}
         onOpenChange={setSaveOpen}
         onSaved={() => fetchData()}
+      />
+
+      {/* Delete confirmation */}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+        title={`Delete memory ${deleteTarget?.short_id ?? ""}?`}
+        description="This action cannot be undone."
+        preview={deleteTarget?.content}
+        confirmLabel="Delete"
+        destructive
+        loading={deleting}
+        onConfirm={handleConfirmDelete}
       />
     </div>
   );

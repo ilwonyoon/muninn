@@ -4,8 +4,9 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { FolderPlus } from "lucide-react";
-import { getStats, listProjects } from "@/lib/api";
-import type { DashboardStats, Project } from "@/lib/types";
+import { getStats } from "@/lib/api";
+import { useProjectStore } from "@/lib/store";
+import type { DashboardStats } from "@/lib/types";
 import { relativeTime } from "@/lib/utils";
 import { StatCard } from "@/components/muninn/stat-card";
 import { StatusDot } from "@/components/muninn/status-dot";
@@ -21,24 +22,21 @@ export default function DashboardPage() {
 
 function DashboardInner() {
   const searchParams = useSearchParams();
+  const { projects, fetchProjects } = useProjectStore();
   const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
 
   const fetchData = () => {
-    Promise.all([getStats(), listProjects()])
-      .then(([s, p]) => {
-        setStats(s);
-        setProjects(p);
-      })
+    Promise.all([getStats(), fetchProjects()])
+      .then(([s]) => setStats(s))
       .catch(() => {})
       .finally(() => setLoading(false));
   };
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Open create dialog if navigated via ?action=new-project
   useEffect(() => {

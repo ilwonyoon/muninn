@@ -4,8 +4,9 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Search as SearchIcon } from "lucide-react";
-import { searchMemories, listProjects, listTags } from "@/lib/api";
-import type { Memory, Project } from "@/lib/types";
+import { searchMemories, listTags } from "@/lib/api";
+import { useProjectStore } from "@/lib/store";
+import type { Memory } from "@/lib/types";
 import { truncate, relativeTime } from "@/lib/utils";
 import { DepthBadge } from "@/components/muninn/depth-badge";
 import { TagPill } from "@/components/muninn/tag-pill";
@@ -33,14 +34,14 @@ function SearchInner() {
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
 
-  const [projects, setProjects] = useState<Project[]>([]);
+  const { projects, fetchProjects } = useProjectStore();
   const [allTags, setAllTags] = useState<string[]>([]);
 
   // Load filter options
   useEffect(() => {
-    listProjects().then(setProjects).catch(() => {});
+    fetchProjects();
     listTags().then(setAllTags).catch(() => {});
-  }, []);
+  }, [fetchProjects]);
 
   const doSearch = useCallback(
     async (q: string) => {
@@ -157,6 +158,68 @@ function SearchInner() {
       <div className="mt-6">
         {loading && (
           <div className="text-center text-xs text-muted">Searching...</div>
+        )}
+
+        {/* Empty state — before any search */}
+        {!loading && !searched && (
+          <div className="space-y-6">
+            {/* Quick search by tag */}
+            {allTags.length > 0 && (
+              <div>
+                <h3 className="text-xs font-medium text-muted">Browse by tag</h3>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {allTags.map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => {
+                        setQuery(tag);
+                        doSearch(tag);
+                      }}
+                      className="rounded-full bg-card-hover px-2.5 py-1 font-mono text-[11px] text-muted transition-colors hover:text-foreground"
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Project quick links */}
+            {projects.length > 0 && (
+              <div>
+                <h3 className="text-xs font-medium text-muted">Projects</h3>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {projects.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => {
+                        setProjectFilter(p.id);
+                        if (query.trim()) doSearch(query);
+                      }}
+                      className="rounded border border-border px-2.5 py-1 text-[11px] text-muted transition-colors hover:text-foreground"
+                    >
+                      {p.id}
+                      <span className="ml-1 font-mono text-[10px] text-muted/60">
+                        {p.memory_count}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Tips */}
+            <div className="rounded-lg border border-border bg-card p-4 text-xs text-muted">
+              <p className="font-medium text-foreground">Search tips</p>
+              <ul className="mt-2 space-y-1">
+                <li>FTS5 supports prefix matching: <code className="font-mono text-foreground">auth*</code></li>
+                <li>Combine with project/tag filters to narrow results</li>
+                <li>Use <kbd className="rounded border border-border px-1 py-0.5 font-mono text-[10px]">Cmd+K</kbd> for quick search anywhere</li>
+              </ul>
+            </div>
+          </div>
         )}
 
         {!loading && searched && results.length === 0 && (
