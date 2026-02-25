@@ -5,11 +5,9 @@ from __future__ import annotations
 import hmac
 from typing import TYPE_CHECKING
 
-from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Mount
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -66,24 +64,14 @@ def create_authenticated_app(
         Additional Starlette routes (e.g. ``Mount("/api", ...)``) to
         include alongside the MCP app.
     """
-    from contextlib import asynccontextmanager
-
-    from starlette.applications import Starlette
+    # Inject extra routes (e.g. /api) directly into the MCP app
+    # so all routes live in a single Starlette instance.
+    for route in extra_routes or []:
+        mcp._custom_starlette_routes.append(route)
 
     mcp_asgi = mcp.streamable_http_app()
 
-    @asynccontextmanager
-    async def lifespan(app: object):  # type: ignore[override]
-        async with mcp_asgi.router.lifespan_context(app):
-            yield
+    # Wrap with Bearer token auth middleware.
+    mcp_asgi.add_middleware(BearerTokenMiddleware, api_key=api_key)
 
-    routes = list(extra_routes or [])
-    routes.append(Mount("/", app=mcp_asgi))
-
-    app = Starlette(
-        routes=routes,
-        middleware=[Middleware(BearerTokenMiddleware, api_key=api_key)],
-        lifespan=lifespan,
-    )
-
-    return app
+    return mcp_asgi

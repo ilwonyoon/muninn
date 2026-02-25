@@ -223,21 +223,10 @@ def _run_http(mcp: FastMCP, host: str, port: int, store: MuninnStore) -> None:
         )
         mcp._custom_starlette_routes.extend(login_routes)
 
-        from contextlib import asynccontextmanager
-
-        from starlette.applications import Starlette
-        from starlette.routing import Mount
-
-        mcp_asgi = mcp.streamable_http_app()
-
-        @asynccontextmanager
-        async def lifespan(app: object):  # type: ignore[override]
-            async with mcp_asgi.router.lifespan_context(app):
-                yield
-
-        routes = [Mount("/", app=mcp_asgi)]
+        # Inject /api routes directly into the MCP app so all routes
+        # live in a single Starlette instance (avoids Mount("/") issues).
         if api_key:
-            routes.insert(0, api_mount)
+            mcp._custom_starlette_routes.append(api_mount)
             print(
                 "OAuth 2.0 mode enabled. Dashboard API protected with MUNINN_API_KEY.",
                 file=sys.stderr,
@@ -249,8 +238,8 @@ def _run_http(mcp: FastMCP, host: str, port: int, store: MuninnStore) -> None:
                 file=sys.stderr,
             )
 
-        app = Starlette(routes=routes, lifespan=lifespan)
-        uvicorn.run(app, host=host, port=port)
+        mcp_asgi = mcp.streamable_http_app()
+        uvicorn.run(mcp_asgi, host=host, port=port)
     elif api_key:
         # Bearer token mode — everything protected.
         from muninn.auth import create_authenticated_app
@@ -259,11 +248,6 @@ def _run_http(mcp: FastMCP, host: str, port: int, store: MuninnStore) -> None:
         uvicorn.run(app, host=host, port=port)
     else:
         # No auth — localhost only with warning.
-        from contextlib import asynccontextmanager
-
-        from starlette.applications import Starlette
-        from starlette.routing import Mount
-
         effective_host = "127.0.0.1" if host == "0.0.0.0" else host
         print(
             "WARNING: No MUNINN_OWNER_PASSWORD or MUNINN_API_KEY set. "
@@ -272,18 +256,11 @@ def _run_http(mcp: FastMCP, host: str, port: int, store: MuninnStore) -> None:
             file=sys.stderr,
         )
 
+        # Inject /api routes into MCP app directly.
+        mcp._custom_starlette_routes.append(api_mount)
+
         mcp_asgi = mcp.streamable_http_app()
-
-        @asynccontextmanager
-        async def lifespan(app: object):  # type: ignore[override]
-            async with mcp_asgi.router.lifespan_context(app):
-                yield
-
-        app = Starlette(
-            routes=[api_mount, Mount("/", app=mcp_asgi)],
-            lifespan=lifespan,
-        )
-        uvicorn.run(app, host=effective_host, port=port)
+        uvicorn.run(mcp_asgi, host=effective_host, port=port)
 
 
 def main() -> None:
