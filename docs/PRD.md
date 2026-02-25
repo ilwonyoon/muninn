@@ -844,11 +844,21 @@ Instead of hard delete, old memories point to their replacement via `superseded_
 
 ### Phase 3: Dashboard + Scale (Month 2+)
 
-- [ ] **Memory Control Dashboard** (React) — 메모리 트리뷰, CRUD, 태그 필터, 상태 토글 (상세 아래)
-- [ ] Semantic search (sqlite-vec + all-MiniLM-L6-v2)
-- [ ] Docker distribution (pre-configured HTTP transport)
-- [ ] Cloud deployment option (Railway/Fly.io) for always-on remote access
-- [ ] Blog post: "Why I built a memory layer for AI tools"
+#### 3A: Automated (Claude can do independently)
+
+| # | Item | Description | Estimate |
+|---|------|-------------|----------|
+| 1 | **Memory Control Dashboard** | React + Vite web UI: project tree, memory CRUD, tag filter, status toggle, supersede chain visualization (상세 아래) | ~2 days |
+| 2 | **Semantic search** | sqlite-vec + all-MiniLM-L6-v2 embedding search as fallback when FTS5 misses | ~1 day |
+| 3 | **Docker distribution** | Dockerfile + docker-compose for pre-configured HTTP transport | ~2hr |
+| 4 | **Awesome MCP Servers PR** | Submit PR to awesome-mcp-servers list | ~30min |
+
+#### 3B: Collaborative (requires user)
+
+| # | Item | Description | User's Part |
+|---|------|-------------|-------------|
+| 1 | **Cloud deployment** | Railway/Fly.io always-on hosting | Account setup, billing, domain config |
+| 2 | **Blog post** | "Why I built a memory layer for AI tools" | Personal story, tone review, publish |
 
 ### Dashboard — Memory Control Panel (Phase 3)
 
