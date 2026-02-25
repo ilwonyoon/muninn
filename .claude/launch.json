@@ -1,0 +1,17 @@
+[
+  {
+    "name": "Muninn Dashboard",
+    "type": "url",
+    "url": "http://localhost:3000",
+    "command": "cd web && npx next dev --port 3000",
+    "env": {},
+    "timeout": 10000
+  },
+  {
+    "name": "Muninn API",
+    "type": "shell",
+    "command": "python3 -m muninn.server --transport http --port 8000",
+    "env": {},
+    "timeout": 5000
+  }
+]
