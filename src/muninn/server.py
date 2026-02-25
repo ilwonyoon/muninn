@@ -201,13 +201,27 @@ def _run_http(mcp: FastMCP, host: str, port: int) -> None:
         )
         mcp._custom_starlette_routes.extend(login_routes)
 
-        app = mcp.streamable_http_app()
+        from contextlib import asynccontextmanager
+
+        from starlette.applications import Starlette
+        from starlette.routing import Mount
+
+        mcp_asgi = mcp.streamable_http_app()
+
+        @asynccontextmanager
+        async def lifespan(app: object):  # type: ignore[override]
+            async with mcp_asgi.router.lifespan_context(app):
+                yield
+
+        app = Starlette(
+            routes=[api_mount, Mount("/", app=mcp_asgi)],
+            lifespan=lifespan,
+        )
 
         print(
             "OAuth 2.0 mode enabled. PIN required for authorization.",
             file=sys.stderr,
         )
-        # TODO: mount api_mount into OAuth app when needed
         uvicorn.run(app, host=host, port=port)
     elif api_key:
         # Legacy Bearer token mode.
@@ -216,12 +230,29 @@ def _run_http(mcp: FastMCP, host: str, port: int) -> None:
         app = create_authenticated_app(mcp, api_key, extra_routes=[api_mount])
         uvicorn.run(app, host=host, port=port)
     else:
+        from contextlib import asynccontextmanager
+
+        from starlette.applications import Starlette
+        from starlette.routing import Mount
+
         print(
             "WARNING: No MUNINN_OWNER_PASSWORD or MUNINN_API_KEY set. "
             "HTTP server running without authentication.",
             file=sys.stderr,
         )
-        mcp.run(transport="streamable-http")
+
+        mcp_asgi = mcp.streamable_http_app()
+
+        @asynccontextmanager
+        async def lifespan(app: object):  # type: ignore[override]
+            async with mcp_asgi.router.lifespan_context(app):
+                yield
+
+        app = Starlette(
+            routes=[api_mount, Mount("/", app=mcp_asgi)],
+            lifespan=lifespan,
+        )
+        uvicorn.run(app, host=host, port=port)
 
 
 def main() -> None:
