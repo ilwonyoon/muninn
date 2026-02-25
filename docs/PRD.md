@@ -5,7 +5,7 @@
 > "Odin feared losing Muninn more than Huginn — losing memory is worse than losing thought."
 
 **Last updated:** 2026-02-24
-**Status:** Phase 1 — Complete ✅ | Phase 2 — Not started
+**Status:** Phase 1 — Complete ✅ | Phase 2A (Infra) — Complete ✅ | Phase 2B-D — In progress
 **Author:** Ilwon Yoon
 
 ---
@@ -798,26 +798,57 @@ Instead of hard delete, old memories point to their replacement via `superseded_
 - ✅ Save in Claude Desktop → recall with full depth hierarchy works seamlessly
 - ✅ Delete and update memories via short IDs from Claude Desktop
 
-### Phase 2: GitHub + Streamable HTTP + Polish (Week 2-3)
+### Phase 2: Remote Access + Quality + Polish (Week 2-3)
 
-- [ ] **Streamable HTTP transport** — `muninn --transport http --port 8787`
-- [ ] ngrok/Cloudflare Tunnel setup guide for Claude Web/Mobile + ChatGPT
-- [ ] github_sync.py (PyGithub integration)
-- [ ] muninn_sync tool
-- [ ] Merge conversation + code memories in recall output
-- [ ] test_formatter.py — formatter output validation
-- [ ] README.md with demo GIF + pronunciation guide ("MOO-nin")
-- [ ] PyPI publish (`uvx muninn-mcp` works)
-- [ ] Awesome MCP Servers list submission
+**Status:** In progress (2026-02-24)
 
-### Phase 3: Community + Scale (Month 2+)
+#### 2A: Infrastructure (COMPLETE ✅)
 
+- [x] **Streamable HTTP transport** — `muninn --transport http --host 0.0.0.0 --port 8000`
+- [x] **Bearer token auth** — `MUNINN_API_KEY` env var
+- [x] **OAuth 2.0 auth** — `MUNINN_OWNER_PASSWORD` + PIN login page (MCP SDK built-in)
+- [x] **PyPI publish** — v0.2.0 (`pip install muninn-mcp`)
+- [x] **ngrok tunnel + macOS auto-start** — launchd + caffeinate Sleep prevention
+- [x] **claude.ai + iPhone connection verified** — OAuth flow working
+- [x] 178 tests passing
+
+#### 2B: Automated (Claude can do independently) — Priority 1
+
+| # | Item | Description | Estimate |
+|---|------|-------------|----------|
+| 1 | **CI/CD (GitHub Actions)** | pytest on PR/push + PyPI auto-publish on tag | ~1hr |
+| 2 | **Usage logging system** | `usage.jsonl` auto-record per tool call (PRD Level 4) | ~30min |
+| 3 | **Memory quality auto-tests** | Simulate save/recall, validate depth/tag/content quality | ~1hr |
+| 4 | **Instructions tuning** | Improve server instructions for better save/recall quality | ~30min |
+| 5 | **README completion** | OAuth guide, per-client setup, architecture diagram | ~1hr |
+| 6 | **`muninn_sync` (GitHub integration)** | Fetch commits/issues/PRs, save as memories | ~2hr |
+| 7 | **PRD update** | Mark completed items, update changelog | ~15min |
+
+#### 2C: Manual (requires user) — Priority 2
+
+| # | Item | Description |
+|---|------|-------------|
+| 1 | **Claude Code stdio setup** | `claude mcp add muninn -- uvx muninn-mcp` |
+| 2 | **Claude Desktop stdio setup** | Add to `claude_desktop_config.json` |
+| 3 | **ChatGPT connector** | Add HTTP connector in ChatGPT settings |
+| 4 | **Codex / Cursor stdio** | Configure MCP in each tool |
+| 5 | **Cross-tool test** | Save in tool A → recall in tool B |
+| 6 | **Memory quality subjective review** | Is the recalled context actually useful? What's missing? |
+| 7 | **Dogfooding (1 week)** | Daily usage + subjective check (PRD Level 4) |
+
+#### 2D: Community — Priority 3
+
+| # | Item | Description |
+|---|------|-------------|
+| 1 | **Awesome MCP Servers submission** | PR to awesome-mcp-servers list |
+
+### Phase 3: Dashboard + Scale (Month 2+)
+
+- [ ] **Memory Control Dashboard** (React) — 메모리 트리뷰, CRUD, 태그 필터, 상태 토글 (상세 아래)
 - [ ] Semantic search (sqlite-vec + all-MiniLM-L6-v2)
 - [ ] Docker distribution (pre-configured HTTP transport)
-- [ ] GitHub Actions CI/CD for PyPI auto-publish
-- [ ] Blog post: "Why I built a memory layer for AI tools"
-- [ ] **Memory Control Dashboard** (React) — 상세 아래
 - [ ] Cloud deployment option (Railway/Fly.io) for always-on remote access
+- [ ] Blog post: "Why I built a memory layer for AI tools"
 
 ### Dashboard — Memory Control Panel (Phase 3)
 
@@ -1131,6 +1162,19 @@ Decisions made during design phase. Each entry records the debate and rationale.
 ---
 
 ## 17. Changelog
+
+### 2026-02-24 — Phase 2A Complete: Remote Access + OAuth (v0.2.0)
+
+- **Streamable HTTP transport** added — `muninn --transport http`
+- **Three auth modes:** OAuth 2.0 (`MUNINN_OWNER_PASSWORD`), Bearer token (`MUNINN_API_KEY`), none
+- **OAuth 2.0 implementation** — MCP SDK built-in framework + SQLite-backed provider + PIN login page
+- **claude.ai + iPhone Claude** verified working via OAuth + ngrok
+- **PyPI v0.2.0 published** — `pip install muninn-mcp`
+- **macOS launchd auto-start** — Muninn server + ngrok auto-start on boot, caffeinate Sleep prevention
+- **178 tests passing** (87 Phase 1 + 24 auth + 28 OAuth)
+- **New files:** `oauth_provider.py`, `oauth_login.py`, `auth.py`
+- **Key fix:** `streamable_http_path="/"` — claude.ai sends MCP requests to root, not `/mcp`
+- **Key learning:** ngrok free tier warning page interferes with OAuth redirects but doesn't block the flow
 
 ### 2026-02-24 — Phase 1 Complete (v0.5)
 
