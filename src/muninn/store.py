@@ -17,7 +17,7 @@ from muninn.models import Memory, MemorySource, Project, ProjectStatus, validate
 _DEFAULT_DB_DIR = os.path.join(os.path.expanduser("~"), ".local", "share", "muninn")
 _DEFAULT_DB_NAME = "muninn.db"
 
-_CURRENT_SCHEMA_VERSION = 2
+_CURRENT_SCHEMA_VERSION = 3
 
 _SCHEMA_SQL = """\
 PRAGMA journal_mode=WAL;
@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS memories (
     content TEXT NOT NULL,
     depth INTEGER DEFAULT 1 CHECK(depth BETWEEN 0 AND 3),
     source TEXT DEFAULT 'conversation' CHECK(source IN ('conversation', 'github', 'manual')),
+    embedding BLOB DEFAULT NULL,
     superseded_by TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -76,7 +77,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
     applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-INSERT OR IGNORE INTO schema_version (version) VALUES (2);
+INSERT OR IGNORE INTO schema_version (version) VALUES (3);
 """
 
 
@@ -216,6 +217,18 @@ class MuninnStore:
                 CREATE INDEX IF NOT EXISTS idx_memories_superseded_by ON memories(superseded_by);
             """)
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (2)")
+
+        if current_version < 3:
+            # Add embedding column for semantic search (optional).
+            # Safe to run multiple times — ALTER TABLE ADD COLUMN is
+            # idempotent if the column already exists (we catch the error).
+            try:
+                conn.execute(
+                    "ALTER TABLE memories ADD COLUMN embedding BLOB DEFAULT NULL"
+                )
+            except Exception:
+                pass  # Column already exists (fresh v3 schema).
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (3)")
 
     # ------------------------------------------------------------------
     # Project operations
@@ -404,6 +417,18 @@ class MuninnStore:
                         "INSERT INTO memory_tags (memory_id, tag) VALUES (?, ?)",
                         (memory_id, tag),
                     )
+
+                # Embed content if semantic search is available.
+                from muninn.embedder import embed_text, is_available
+
+                embedding_blob = None
+                if is_available():
+                    embedding_blob = embed_text(content)
+                    if embedding_blob is not None:
+                        conn.execute(
+                            "UPDATE memories SET embedding = ? WHERE id = ?",
+                            (embedding_blob, memory_id),
+                        )
 
                 conn.execute(
                     "UPDATE projects SET updated_at = ? WHERE id = ?",
@@ -680,6 +705,18 @@ class MuninnStore:
                     values,
                 )
 
+                # Re-embed if content changed.
+                if content is not None:
+                    from muninn.embedder import embed_text, is_available
+
+                    if is_available():
+                        embedding_blob = embed_text(content)
+                        if embedding_blob is not None:
+                            conn.execute(
+                                "UPDATE memories SET embedding = ? WHERE id = ?",
+                                (embedding_blob, memory_id),
+                            )
+
                 # Update tags if provided
                 if tags is not None:
                     conn.execute(
@@ -729,3 +766,149 @@ class MuninnStore:
         finally:
             conn.close()
         return cursor.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # Semantic search
+    # ------------------------------------------------------------------
+
+    def semantic_search(
+        self,
+        query_embedding: bytes,
+        project_id: str | None = None,
+        tags: list[str] | None = None,
+        limit: int = 10,
+        threshold: float = 0.3,
+    ) -> list[tuple[Memory, float]]:
+        """Semantic similarity search over non-superseded memories.
+
+        Parameters
+        ----------
+        query_embedding:
+            The query embedding as raw float32 bytes.
+        project_id:
+            Optional project filter.
+        tags:
+            Optional tag filter (AND logic — all tags must match).
+        limit:
+            Maximum results to return.
+        threshold:
+            Minimum cosine similarity (0-1).
+
+        Returns
+        -------
+        List of ``(Memory, similarity_score)`` tuples, sorted by
+        similarity descending.
+        """
+        from muninn.embedder import cosine_similarity_search
+
+        conn = self._get_connection()
+        try:
+            with conn:
+                sql = """
+                    SELECT id, embedding FROM memories
+                    WHERE superseded_by IS NULL
+                      AND embedding IS NOT NULL
+                """
+                params: list[object] = []
+
+                if project_id is not None:
+                    sql += " AND project_id = ?"
+                    params.append(project_id)
+
+                if tags:
+                    for tag in tags:
+                        sql += """
+                            AND id IN (
+                                SELECT memory_id FROM memory_tags WHERE tag = ?
+                            )
+                        """
+                        params.append(tag)
+
+                rows = conn.execute(sql, params).fetchall()
+
+                candidates = [
+                    (row["id"], bytes(row["embedding"]))
+                    for row in rows
+                    if row["embedding"] is not None
+                ]
+        finally:
+            conn.close()
+
+        if not candidates:
+            return []
+
+        matches = cosine_similarity_search(
+            query_embedding, candidates, top_k=limit, threshold=threshold,
+        )
+
+        if not matches:
+            return []
+
+        # Fetch full Memory objects for matched IDs.
+        matched_ids = [mid for mid, _ in matches]
+        score_map = {mid: score for mid, score in matches}
+
+        conn = self._get_connection()
+        try:
+            with conn:
+                placeholders = ",".join("?" for _ in matched_ids)
+                mem_rows = conn.execute(
+                    f"SELECT * FROM memories WHERE id IN ({placeholders})",
+                    matched_ids,
+                ).fetchall()
+                tags_map = _fetch_tags_for_memories(conn, matched_ids)
+        finally:
+            conn.close()
+
+        memories_by_id = {
+            r["id"]: _row_to_memory(r, tags=tags_map.get(r["id"], ()))
+            for r in mem_rows
+        }
+
+        results: list[tuple[Memory, float]] = []
+        for mid, score in matches:
+            if mid in memories_by_id:
+                results.append((memories_by_id[mid], score))
+
+        return results
+
+    def backfill_embeddings(self) -> int:
+        """Embed all non-superseded memories that have ``embedding IS NULL``.
+
+        Returns the count of successfully embedded memories.
+        Called lazily before the first semantic search.
+        """
+        from muninn.embedder import embed_texts, is_available
+
+        if not is_available():
+            return 0
+
+        conn = self._get_connection()
+        try:
+            with conn:
+                rows = conn.execute(
+                    """
+                    SELECT id, content FROM memories
+                    WHERE superseded_by IS NULL AND embedding IS NULL
+                    """
+                ).fetchall()
+
+                if not rows:
+                    return 0
+
+                contents = [r["content"] for r in rows]
+                ids = [r["id"] for r in rows]
+                blobs = embed_texts(contents)
+
+                count = 0
+                for memory_id, blob in zip(ids, blobs):
+                    if blob is not None:
+                        conn.execute(
+                            "UPDATE memories SET embedding = ? WHERE id = ?",
+                            (blob, memory_id),
+                        )
+                        count += 1
+        finally:
+            conn.close()
+
+        return count

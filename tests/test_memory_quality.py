@@ -80,7 +80,10 @@ class TestRecallOrdering:
         assert depths == sorted(depths), f"Expected ascending depth order, got {depths}"
 
     def test_newest_first_within_same_depth(self, store, project):
+        import time
+
         store.save_memory(project, "First decision.", depth=1, tags=["decision"])
+        time.sleep(0.05)  # Ensure distinct updated_at timestamps
         store.save_memory(project, "Second decision.", depth=1, tags=["decision"])
 
         memories, _ = store.recall(project_id=project, depth=1)

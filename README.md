@@ -37,6 +37,7 @@ Zero copy-paste. Zero re-explanation. Works across any MCP-compatible tool.
 # From PyPI (recommended)
 pip install muninn-mcp            # basic (stdio only)
 pip install muninn-mcp[http]      # with HTTP transport
+pip install muninn-mcp[semantic]  # with semantic search (~200MB model)
 pip install muninn-mcp[all]       # everything
 
 # Or use uvx (no install needed)
@@ -163,7 +164,7 @@ Clients send `Authorization: Bearer your-secret-key` with each request. Use ngro
 |------|---------|----------------|
 | `muninn_save` | Save a memory to a project | `project`, `content`, `depth` (0-3), `tags` |
 | `muninn_recall` | Load project context | `project`, `depth` (default 1), `max_chars` (default 8000), `tags` |
-| `muninn_search` | Full-text search across all memories | `query`, `project`, `tags`, `limit` |
+| `muninn_search` | Full-text + semantic search across all memories | `query`, `project`, `tags`, `limit`, `semantic` |
 | `muninn_status` | List all projects with memory counts | — |
 | `muninn_manage` | Delete/update memories, manage projects | `action`, `project`, `memory_id`, `field`, `value` |
 
@@ -235,6 +236,24 @@ User: "Load ouri-app context"
 
 ---
 
+## Semantic Search (Optional)
+
+When keyword search misses related memories (e.g. searching "login" doesn't find "OAuth authentication flow"), semantic search finds them by meaning similarity.
+
+```bash
+pip install muninn-mcp[semantic]   # adds fastembed + bge-small-en-v1.5 (~200MB)
+```
+
+**How it works:**
+- Embeddings are generated automatically on `muninn_save` and `muninn_manage(update_memory)`
+- `muninn_search` tries FTS5 keyword search first. If no results, falls back to semantic search automatically
+- Use `semantic=True` to skip FTS5 and search by meaning only
+- Existing memories are backfilled on first semantic search
+
+**Without `[semantic]` installed:** Everything works exactly the same — FTS5 keyword search only, no errors.
+
+---
+
 ## Data Storage
 
 ```
@@ -265,7 +284,7 @@ SQLite with WAL mode. Single file. Back up with `cp muninn.db muninn.db.bak`.
 # Install with dev deps
 pip install -e ".[dev]"
 
-# Run tests (132+ tests)
+# Run tests (239 tests)
 python -m pytest tests/ -v
 
 # Run the server (stdio)
@@ -283,10 +302,11 @@ src/muninn/
   auth.py            # Bearer token auth middleware
   oauth_provider.py  # OAuth 2.0 provider (PIN-based)
   oauth_login.py     # OAuth login routes
-  tools.py           # 5 MCP tool functions
-  store.py           # SQLite with FTS5 full-text search
+  tools.py           # 6 MCP tool functions
+  store.py           # SQLite with FTS5 + semantic search
   models.py          # Frozen dataclasses
   formatter.py       # LLM-readable output formatting
+  embedder.py        # Embedding engine (fastembed, graceful degradation)
 ```
 
 ## License

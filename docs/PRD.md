@@ -849,7 +849,7 @@ Instead of hard delete, old memories point to their replacement via `superseded_
 | # | Item | Description | Status |
 |---|------|-------------|--------|
 | 1 | **Memory Control Dashboard** | React + Vite web UI: project tree, memory CRUD, tag filter, status toggle, supersede chain visualization (상세 아래) | Planned |
-| 2 | **Semantic search** | sqlite-vec + all-MiniLM-L6-v2 embedding search as fallback when FTS5 misses | Planned |
+| 2 | **Semantic search** | fastembed + bge-small-en-v1.5 (384d BLOB) as FTS5 fallback. opt-in via `[semantic]` extra. Schema v3 migration. | ✅ Done |
 | 3 | **Docker distribution** | Dockerfile + docker-compose for pre-configured HTTP transport | ✅ Done |
 | 4 | **Awesome MCP Servers** | Submit to mcpservers.org + punkpeye/awesome-mcp-servers | 📝 Draft ready |
 
@@ -1143,7 +1143,7 @@ MCP 도구 호출은 사용자가 기다리는 시간이므로 빨라야 함.
 | Question | Current stance | Future direction |
 |----------|---------------|-----------------|
 | Hybrid curation (AI suggests, human approves) | Manual only in v1 | Worth exploring when usage patterns are clear |
-| Semantic search | FTS5 + tags in v1 | sqlite-vec + MiniLM when tag search proves insufficient |
+| Semantic search | ✅ Implemented: fastembed + bge-small-en-v1.5 BLOB, FTS5 fallback | Done in Phase 3A. opt-in `[semantic]` extra |
 | Auto-recall on session start | Requires user/AI to call | CLAUDE.md instruction or MCP resources. Claude Desktop can use project instructions |
 | Multi-user support | Single user | Out of scope unless demand appears |
 | Cloud sync | Local only | Optional self-hosted, not SaaS |
