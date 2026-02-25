@@ -48,12 +48,23 @@ class BearerTokenMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-def create_authenticated_app(mcp: FastMCP, api_key: str) -> object:
+def create_authenticated_app(
+    mcp: FastMCP,
+    api_key: str,
+    *,
+    extra_routes: list | None = None,
+) -> object:
     """Wrap the MCP streamable HTTP app with Bearer token authentication.
 
     Returns a Starlette application with the auth middleware applied.
     The MCP app's lifespan context is forwarded so the StreamableHTTP
     session manager initialises correctly.
+
+    Parameters
+    ----------
+    extra_routes:
+        Additional Starlette routes (e.g. ``Mount("/api", ...)``) to
+        include alongside the MCP app.
     """
     from contextlib import asynccontextmanager
 
@@ -66,8 +77,11 @@ def create_authenticated_app(mcp: FastMCP, api_key: str) -> object:
         async with mcp_asgi.router.lifespan_context(app):
             yield
 
+    routes = list(extra_routes or [])
+    routes.append(Mount("/", app=mcp_asgi))
+
     app = Starlette(
-        routes=[Mount("/", app=mcp_asgi)],
+        routes=routes,
         middleware=[Middleware(BearerTokenMiddleware, api_key=api_key)],
         lifespan=lifespan,
     )

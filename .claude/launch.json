@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "autoVerify": true,
+  "configurations": [
+    {
+      "name": "muninn-api",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "muninn.server", "--transport", "http", "--port", "8000"],
+      "port": 8000
+    },
+    {
+      "name": "muninn-dashboard",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["next", "dev", "--port", "3000"],
+      "cwd": "web",
+      "port": 3000
+    }
+  ]
+}

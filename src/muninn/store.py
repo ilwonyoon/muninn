@@ -912,3 +912,160 @@ class MuninnStore:
             conn.close()
 
         return count
+
+    # ------------------------------------------------------------------
+    # Dashboard queries
+    # ------------------------------------------------------------------
+
+    def get_memory(self, memory_id: str) -> Memory | None:
+        """Fetch a single memory by full or prefix ID, including tags."""
+        conn = self._get_connection()
+        try:
+            with conn:
+                resolved = self._resolve_memory_id(conn, memory_id)
+                if resolved is None:
+                    return None
+                row = conn.execute(
+                    "SELECT * FROM memories WHERE id = ?", (resolved,)
+                ).fetchone()
+                if row is None:
+                    return None
+                tags = _fetch_tags_for_memory(conn, resolved)
+        finally:
+            conn.close()
+        return _row_to_memory(row, tags=tags)
+
+    def get_depth_distribution(self, project_id: str) -> dict[int, int]:
+        """Return depth → count mapping for active memories in a project."""
+        conn = self._get_connection()
+        try:
+            rows = conn.execute(
+                """
+                SELECT depth, COUNT(*) AS cnt FROM memories
+                WHERE project_id = ? AND superseded_by IS NULL
+                GROUP BY depth
+                """,
+                (project_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+        return {r["depth"]: r["cnt"] for r in rows}
+
+    def get_all_tags(self, project_id: str | None = None) -> list[str]:
+        """Return all distinct tags, optionally scoped to a project."""
+        conn = self._get_connection()
+        try:
+            if project_id is not None:
+                rows = conn.execute(
+                    """
+                    SELECT DISTINCT mt.tag FROM memory_tags mt
+                    JOIN memories m ON mt.memory_id = m.id
+                    WHERE m.project_id = ? AND m.superseded_by IS NULL
+                    ORDER BY mt.tag
+                    """,
+                    (project_id,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT DISTINCT mt.tag FROM memory_tags mt
+                    JOIN memories m ON mt.memory_id = m.id
+                    WHERE m.superseded_by IS NULL
+                    ORDER BY mt.tag
+                    """
+                ).fetchall()
+        finally:
+            conn.close()
+        return [r["tag"] for r in rows]
+
+    def get_supersede_chain(self, memory_id: str) -> list[Memory]:
+        """Return the full supersede chain for a memory (oldest first).
+
+        Traces backward (who did this memory supersede?) and forward
+        (who superseded this memory?) to build the complete chain.
+        """
+        conn = self._get_connection()
+        try:
+            with conn:
+                resolved = self._resolve_memory_id(conn, memory_id)
+                if resolved is None:
+                    return []
+
+                # Collect all related memory IDs by walking the chain.
+                visited: set[str] = set()
+                queue = [resolved]
+
+                while queue:
+                    current = queue.pop()
+                    if current in visited or current == "_deleted":
+                        continue
+                    visited.add(current)
+
+                    row = conn.execute(
+                        "SELECT id, superseded_by FROM memories WHERE id = ?",
+                        (current,),
+                    ).fetchone()
+                    if row is None:
+                        continue
+
+                    # Forward: this memory was superseded by another.
+                    if row["superseded_by"] and row["superseded_by"] != "_deleted":
+                        queue.append(row["superseded_by"])
+
+                    # Backward: find memories that were superseded by this one.
+                    back_rows = conn.execute(
+                        "SELECT id FROM memories WHERE superseded_by = ?",
+                        (current,),
+                    ).fetchall()
+                    for br in back_rows:
+                        queue.append(br["id"])
+
+                if not visited:
+                    return []
+
+                # Fetch full memory objects for all chain members.
+                placeholders = ",".join("?" for _ in visited)
+                rows = conn.execute(
+                    f"SELECT * FROM memories WHERE id IN ({placeholders}) ORDER BY created_at ASC",
+                    list(visited),
+                ).fetchall()
+                mem_ids = [r["id"] for r in rows]
+                tags_map = _fetch_tags_for_memories(conn, mem_ids)
+        finally:
+            conn.close()
+
+        return [
+            _row_to_memory(r, tags=tags_map.get(r["id"], ()))
+            for r in rows
+        ]
+
+    def get_dashboard_stats(self) -> dict[str, int]:
+        """Return aggregate statistics for the dashboard overview."""
+        conn = self._get_connection()
+        try:
+            with conn:
+                proj_row = conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM projects"
+                ).fetchone()
+                active_row = conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM projects WHERE status = 'active'"
+                ).fetchone()
+                mem_row = conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM memories WHERE superseded_by IS NULL"
+                ).fetchone()
+                stale_row = conn.execute(
+                    """
+                    SELECT COUNT(*) AS cnt FROM projects
+                    WHERE status = 'active'
+                      AND updated_at < datetime('now', '-7 days')
+                    """,
+                ).fetchone()
+        finally:
+            conn.close()
+
+        return {
+            "total_projects": proj_row["cnt"] if proj_row else 0,
+            "active_projects": active_row["cnt"] if active_row else 0,
+            "total_memories": mem_row["cnt"] if mem_row else 0,
+            "stale_projects": stale_row["cnt"] if stale_row else 0,
+        }

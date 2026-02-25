@@ -165,18 +165,53 @@ def _create_mcp(
     return mcp
 
 
-def _run_http(mcp: FastMCP, host: str, port: int) -> None:
+def _create_api_mount(store: MuninnStore, api_key: str | None = None):
+    """Create the /api Mount with dashboard REST routes.
+
+    When *api_key* is provided, the mount is wrapped with Bearer token
+    authentication middleware so the dashboard API is never exposed
+    without credentials.
+    """
+    from starlette.applications import Starlette
+    from starlette.middleware import Middleware
+    from starlette.routing import Mount
+
+    from muninn.api import create_api_routes
+
+    api_routes = create_api_routes(store)
+
+    if api_key:
+        from muninn.auth import BearerTokenMiddleware
+
+        api_app = Starlette(
+            routes=api_routes,
+            middleware=[Middleware(BearerTokenMiddleware, api_key=api_key)],
+        )
+        return Mount("/api", app=api_app)
+
+    return Mount("/api", routes=api_routes)
+
+
+def _run_http(mcp: FastMCP, host: str, port: int, store: MuninnStore) -> None:
     """Run the server with Streamable HTTP transport.
 
     Auth mode priority:
       1. MUNINN_OWNER_PASSWORD → OAuth 2.0 (already wired into FastMCP)
       2. MUNINN_API_KEY → Bearer token middleware
-      3. Neither → no auth (warning)
+      3. Neither → no auth (localhost only, warning)
+
+    Dashboard API (/api/*) protection:
+      - If MUNINN_API_KEY is set: /api protected with Bearer token in ALL modes
+      - If only MUNINN_OWNER_PASSWORD: /api NOT mounted (use MUNINN_API_KEY too)
+      - If neither: /api mounted unprotected (localhost-only warning)
     """
     import uvicorn
 
     owner_password = os.environ.get("MUNINN_OWNER_PASSWORD")
     api_key = os.environ.get("MUNINN_API_KEY")
+
+    # Build API mount — protected with Bearer token when api_key is set.
+    api_mount = _create_api_mount(store, api_key=api_key)
 
     if owner_password:
         # OAuth mode — FastMCP already has auth routes via constructor.
@@ -188,26 +223,67 @@ def _run_http(mcp: FastMCP, host: str, port: int) -> None:
         )
         mcp._custom_starlette_routes.extend(login_routes)
 
-        app = mcp.streamable_http_app()
+        from contextlib import asynccontextmanager
 
-        print(
-            "OAuth 2.0 mode enabled. PIN required for authorization.",
-            file=sys.stderr,
-        )
+        from starlette.applications import Starlette
+        from starlette.routing import Mount
+
+        mcp_asgi = mcp.streamable_http_app()
+
+        @asynccontextmanager
+        async def lifespan(app: object):  # type: ignore[override]
+            async with mcp_asgi.router.lifespan_context(app):
+                yield
+
+        routes = [Mount("/", app=mcp_asgi)]
+        if api_key:
+            routes.insert(0, api_mount)
+            print(
+                "OAuth 2.0 mode enabled. Dashboard API protected with MUNINN_API_KEY.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "OAuth 2.0 mode enabled. Dashboard API disabled "
+                "(set MUNINN_API_KEY to enable /api routes).",
+                file=sys.stderr,
+            )
+
+        app = Starlette(routes=routes, lifespan=lifespan)
         uvicorn.run(app, host=host, port=port)
     elif api_key:
-        # Legacy Bearer token mode.
+        # Bearer token mode — everything protected.
         from muninn.auth import create_authenticated_app
 
-        app = create_authenticated_app(mcp, api_key)
+        app = create_authenticated_app(mcp, api_key, extra_routes=[api_mount])
         uvicorn.run(app, host=host, port=port)
     else:
+        # No auth — localhost only with warning.
+        from contextlib import asynccontextmanager
+
+        from starlette.applications import Starlette
+        from starlette.routing import Mount
+
+        effective_host = "127.0.0.1" if host == "0.0.0.0" else host
         print(
             "WARNING: No MUNINN_OWNER_PASSWORD or MUNINN_API_KEY set. "
-            "HTTP server running without authentication.",
+            "HTTP server running without authentication. "
+            "Dashboard API bound to localhost only.",
             file=sys.stderr,
         )
-        mcp.run(transport="streamable-http")
+
+        mcp_asgi = mcp.streamable_http_app()
+
+        @asynccontextmanager
+        async def lifespan(app: object):  # type: ignore[override]
+            async with mcp_asgi.router.lifespan_context(app):
+                yield
+
+        app = Starlette(
+            routes=[api_mount, Mount("/", app=mcp_asgi)],
+            lifespan=lifespan,
+        )
+        uvicorn.run(app, host=effective_host, port=port)
 
 
 def main() -> None:
@@ -215,7 +291,8 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
-    init_store(MuninnStore())
+    store = MuninnStore()
+    init_store(store)
 
     mcp = _create_mcp(
         host=args.host,
@@ -224,7 +301,7 @@ def main() -> None:
     )
 
     if args.transport == "http":
-        _run_http(mcp, args.host, args.port)
+        _run_http(mcp, args.host, args.port, store=store)
     else:
         mcp.run(transport="stdio")
 
