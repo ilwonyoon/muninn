@@ -458,6 +458,7 @@ export default function ProjectDetailPage() {
                 treeData={graphData}
                 activeMemoryId={panelMemoryId}
                 onNodeSelect={(shortId) => setPanelMemoryId(shortId)}
+                onDeleteRequest={(mem) => setDeleteTarget(mem)}
               />
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-muted">

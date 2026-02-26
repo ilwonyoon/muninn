@@ -8,20 +8,9 @@ const MEMORY_HEIGHT = 130;
 const GROUP_WIDTH = 200;
 const GROUP_HEIGHT = 60;
 
-const CATEGORY_COLORS: Record<string, string> = {
-  vision: "#8b5cf6",
-  product: "#ec4899",
-  insight: "#06b6d4",
-  status: "#00cc88",
-  architecture: "#3b82f6",
-  decision: "#f59e0b",
-  implementation: "#6366f1",
-  issue: "#ef4444",
-};
-
 export function useTreeLayout(
   treeData: MemoryTreeResponse
-): { nodes: Node[]; edges: Edge[] } {
+): { initialNodes: Node[]; initialEdges: Edge[] } {
   return useMemo(() => {
     const { roots, groups, edges: treeEdges } = treeData;
 
@@ -128,7 +117,7 @@ export function useTreeLayout(
           id: `e-${root.id.slice(0, 8)}-group-${cat}`,
           source: root.id,
           target: `group:${cat}`,
-          type: "smoothstep",
+          type: "default",
           style: {
             stroke: "var(--border-hover)",
             strokeWidth: 1,
@@ -146,7 +135,7 @@ export function useTreeLayout(
           id: `e-group-${cat}-${mem.id.slice(0, 8)}`,
           source: `group:${cat}`,
           target: mem.id,
-          type: "smoothstep",
+          type: "default",
           style: {
             stroke: "var(--border-hover)",
             strokeWidth: 1,
@@ -156,6 +145,6 @@ export function useTreeLayout(
       }
     }
 
-    return { nodes: rfNodes, edges: rfEdges };
+    return { initialNodes: rfNodes, initialEdges: rfEdges };
   }, [treeData]);
 }

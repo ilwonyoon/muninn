@@ -1,60 +1,133 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ReactFlow,
   Background,
   Controls,
   MiniMap,
   useReactFlow,
+  useNodesState,
+  useEdgesState,
   ReactFlowProvider,
   type Node,
+  type OnSelectionChangeParams,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { Memory, MemoryTreeResponse } from "@/lib/types";
 import { MemoryGraphNode, CategoryGroupNode } from "@/components/muninn/memory-graph-node";
 import { useTreeLayout } from "@/components/muninn/use-graph-layout";
+import { CATEGORY_COLORS } from "@/lib/constants";
 
 const nodeTypes = {
   memoryNode: MemoryGraphNode,
   categoryGroupNode: CategoryGroupNode,
 };
 
-const CATEGORY_COLORS: Record<string, string> = {
-  vision: "#8b5cf6",
-  product: "#ec4899",
-  insight: "#06b6d4",
-  status: "#00cc88",
-  architecture: "#3b82f6",
-  decision: "#f59e0b",
-  implementation: "#6366f1",
-  issue: "#ef4444",
-};
-
 interface MemoryGraphViewProps {
   treeData: MemoryTreeResponse;
   activeMemoryId: string | null;
   onNodeSelect: (shortId: string) => void;
+  onDeleteRequest: (memory: Memory) => void;
 }
 
 function MemoryGraphViewInner({
   treeData,
   onNodeSelect,
+  onDeleteRequest,
 }: Omit<MemoryGraphViewProps, "activeMemoryId">) {
-  const { nodes, edges } = useTreeLayout(treeData);
+  const { initialNodes, initialEdges } = useTreeLayout(treeData);
+  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const { fitView } = useReactFlow();
   const fittedRef = useRef(false);
+  const [selectedMemoryNode, setSelectedMemoryNode] = useState<Node | null>(null);
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+
+  const toggleCategory = useCallback((category: string) => {
+    setCollapsedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(category)) {
+        next.delete(category);
+      } else {
+        next.add(category);
+      }
+      return next;
+    });
+  }, []);
+
+  // Sync when treeData changes or collapsed state changes
+  useEffect(() => {
+    // Inject collapsed state into category group nodes
+    const processed = initialNodes.map((n) => {
+      if (n.type === "categoryGroupNode") {
+        const cat = (n.data as Record<string, unknown>).category as string;
+        return { ...n, data: { ...n.data, collapsed: collapsedCategories.has(cat) } };
+      }
+      return n;
+    });
+
+    // Filter out memory nodes under collapsed categories
+    const visible = processed.filter((n) => {
+      if (n.type !== "memoryNode") return true;
+      const parentEdge = initialEdges.find(
+        (e) => e.target === n.id && e.source.startsWith("group:")
+      );
+      if (!parentEdge) return true; // root node
+      const cat = parentEdge.source.replace("group:", "");
+      return !collapsedCategories.has(cat);
+    });
+
+    const visibleIds = new Set(visible.map((n) => n.id));
+    const filteredEdges = initialEdges.filter(
+      (e) => visibleIds.has(e.source) && visibleIds.has(e.target)
+    );
+
+    setNodes(visible);
+    setEdges(filteredEdges);
+
+    if (collapsedCategories.size === 0) {
+      fittedRef.current = false;
+    }
+  }, [initialNodes, initialEdges, collapsedCategories, setNodes, setEdges]);
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
       const data = node.data as Record<string, unknown>;
-      if (data.isGroup) return;
+      if (data.isGroup) {
+        toggleCategory(data.category as string);
+        return;
+      }
       const mem = data as unknown as Memory;
       onNodeSelect(mem.short_id);
     },
-    [onNodeSelect]
+    [onNodeSelect, toggleCategory]
   );
 
+  const handleSelectionChange = useCallback(
+    ({ nodes: selected }: OnSelectionChangeParams) => {
+      const memNode = selected.find((n) => n.type === "memoryNode") ?? null;
+      setSelectedMemoryNode(memNode);
+    },
+    []
+  );
+
+  // DEL / Backspace → delete selected memory node (with confirmation via parent)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      if (!selectedMemoryNode || selectedMemoryNode.type !== "memoryNode") return;
+      e.preventDefault();
+      const mem = selectedMemoryNode.data as unknown as Memory;
+      onDeleteRequest(mem);
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [selectedMemoryNode, onDeleteRequest]);
+
+  // Fit view on first render
   useEffect(() => {
     if (fittedRef.current || nodes.length === 0) return;
     const timer = setTimeout(() => {
@@ -68,14 +141,18 @@ function MemoryGraphViewInner({
     <ReactFlow
       nodes={nodes}
       edges={edges}
+      onNodesChange={onNodesChange}
+      onEdgesChange={onEdgesChange}
       nodeTypes={nodeTypes}
       onNodeClick={handleNodeClick}
+      onSelectionChange={handleSelectionChange}
+      deleteKeyCode={null}
       fitView
       fitViewOptions={{ padding: 0.15 }}
       proOptions={{ hideAttribution: true }}
       minZoom={0.2}
       maxZoom={2}
-      nodesDraggable={false}
+      nodesDraggable
       nodesConnectable={false}
     >
       <Background color="var(--border-default)" gap={24} size={1} />
@@ -91,7 +168,7 @@ function MemoryGraphViewInner({
           }
           const depth = (data as unknown as Memory)?.depth ?? 1;
           const depthColors: Record<number, string> = {
-            0: "#00cc88",
+            0: "#10b981",
             1: "#3b82f6",
             2: "#f59e0b",
             3: "#666666",
@@ -109,6 +186,7 @@ export function MemoryGraphView({
   treeData,
   activeMemoryId: _activeMemoryId,
   onNodeSelect,
+  onDeleteRequest,
 }: MemoryGraphViewProps) {
   return (
     <div className="h-full w-full">
@@ -116,6 +194,7 @@ export function MemoryGraphView({
         <MemoryGraphViewInner
           treeData={treeData}
           onNodeSelect={onNodeSelect}
+          onDeleteRequest={onDeleteRequest}
         />
       </ReactFlowProvider>
     </div>
