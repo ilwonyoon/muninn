@@ -167,7 +167,7 @@ def _create_mcp(
         instructions=_INSTRUCTIONS,
         host=host,
         port=port,
-        streamable_http_path="/",
+        streamable_http_path="/mcp",
         **oauth_kwargs,
     )
     mcp.tool()(muninn_save)
