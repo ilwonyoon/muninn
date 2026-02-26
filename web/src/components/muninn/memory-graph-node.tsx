@@ -8,13 +8,8 @@ import { truncate, cn } from "@/lib/utils";
 import { DepthBadge } from "@/components/muninn/depth-badge";
 import { TagPill } from "@/components/muninn/tag-pill";
 
-// Border color per depth using CSS variables
-const DEPTH_BORDER: Record<number, string> = {
-  0: "border-depth-0",
-  1: "border-depth-1",
-  2: "border-depth-2",
-  3: "border-depth-3",
-};
+// Neutral border for all memory nodes — category group provides the color signal
+const NEUTRAL_BORDER = "border-[var(--border-default)]";
 
 // Node data type — just Memory
 type MemoryNodeData = Memory;
@@ -24,8 +19,8 @@ function MemoryGraphNodeInner({ data }: NodeProps) {
   return (
     <div
       className={cn(
-        "w-[280px] cursor-pointer rounded-lg border-2 bg-card p-3 shadow-md transition-shadow hover:shadow-lg",
-        DEPTH_BORDER[mem.depth] ?? "border-border"
+        "w-[280px] cursor-pointer rounded-lg border bg-card p-3 shadow-sm transition-shadow hover:shadow-md",
+        NEUTRAL_BORDER
       )}
     >
       <Handle type="target" position={Position.Top} className="!bg-border-hover !w-2 !h-2" />

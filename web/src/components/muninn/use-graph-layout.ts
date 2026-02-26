@@ -121,7 +121,7 @@ export function useTreeLayout(
     // Build React Flow edges
     const rfEdges: Edge[] = [];
 
-    // Root → group edges (dashed)
+    // Root → group edges (dashed, neutral)
     for (const root of roots) {
       for (const [cat] of activeCategories) {
         rfEdges.push({
@@ -130,8 +130,8 @@ export function useTreeLayout(
           target: `group:${cat}`,
           type: "smoothstep",
           style: {
-            stroke: CATEGORY_COLORS[cat] ?? "var(--border-hover)",
-            strokeWidth: 1.5,
+            stroke: "var(--border-hover)",
+            strokeWidth: 1,
             strokeDasharray: "5 5",
           },
           animated: false,
@@ -139,7 +139,7 @@ export function useTreeLayout(
       }
     }
 
-    // Group → memory edges (solid)
+    // Group → memory edges (solid, neutral)
     for (const [cat, mems] of activeCategories) {
       for (const mem of mems) {
         rfEdges.push({
@@ -148,8 +148,8 @@ export function useTreeLayout(
           target: mem.id,
           type: "smoothstep",
           style: {
-            stroke: CATEGORY_COLORS[cat] ?? "var(--border-hover)",
-            strokeWidth: 1.5,
+            stroke: "var(--border-hover)",
+            strokeWidth: 1,
           },
           animated: false,
         });
