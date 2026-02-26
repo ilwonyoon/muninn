@@ -34,6 +34,7 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 _ACCESS_TOKEN_TTL = 3600  # 1 hour
 _REFRESH_TOKEN_TTL = 2_592_000  # 30 days
 _AUTH_CODE_TTL = 600  # 10 minutes
+_DEFAULT_SCOPES = ["muninn"]  # Assigned when client omits scope (e.g. claude.ai)
 
 _SCHEMA_SQL = """\
 PRAGMA journal_mode=WAL;
@@ -188,7 +189,10 @@ class MuninnOAuthProvider(OAuthAuthorizationServerProvider):
         """
         code = secrets.token_urlsafe(32)
         expires_at = time.time() + _AUTH_CODE_TTL
-        scopes_json = json.dumps(params.scopes if params.scopes else [])
+        # claude.ai omits scope from authorize request; assign default so
+        # the token response always contains a non-null "scope" field.
+        scopes = params.scopes if params.scopes else _DEFAULT_SCOPES
+        scopes_json = json.dumps(scopes)
 
         conn = self._get_connection()
         try:
@@ -274,7 +278,7 @@ class MuninnOAuthProvider(OAuthAuthorizationServerProvider):
         access_expires = now + _ACCESS_TOKEN_TTL
         refresh_expires = now + _REFRESH_TOKEN_TTL
 
-        scopes = authorization_code.scopes or []
+        scopes = authorization_code.scopes or _DEFAULT_SCOPES
         scopes_json = json.dumps(scopes)
         resource = authorization_code.resource
 
@@ -321,7 +325,7 @@ class MuninnOAuthProvider(OAuthAuthorizationServerProvider):
         finally:
             conn.close()
 
-        scope_str = " ".join(scopes) if scopes else None
+        scope_str = " ".join(scopes)
 
         return OAuthToken(
             access_token=access_token,
@@ -382,7 +386,7 @@ class MuninnOAuthProvider(OAuthAuthorizationServerProvider):
         access_expires = now + _ACCESS_TOKEN_TTL
         refresh_expires = now + _REFRESH_TOKEN_TTL
 
-        effective_scopes = scopes if scopes else refresh_token.scopes
+        effective_scopes = scopes if scopes else (refresh_token.scopes or _DEFAULT_SCOPES)
         scopes_json = json.dumps(effective_scopes)
 
         conn = self._get_connection()
@@ -437,7 +441,7 @@ class MuninnOAuthProvider(OAuthAuthorizationServerProvider):
         finally:
             conn.close()
 
-        scope_str = " ".join(effective_scopes) if effective_scopes else None
+        scope_str = " ".join(effective_scopes)
 
         return OAuthToken(
             access_token=new_access,
