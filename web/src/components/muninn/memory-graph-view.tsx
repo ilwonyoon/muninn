@@ -148,10 +148,6 @@ function MemoryGraphViewInner({
 
     setNodes(visible);
     setEdges(filteredEdges);
-
-    if (collapsedCategories.size === 0) {
-      fittedRef.current = false;
-    }
   }, [initialNodes, initialEdges, collapsedCategories, setNodes, setEdges]);
 
   const handleNodeClick = useCallback(
