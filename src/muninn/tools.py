@@ -104,6 +104,8 @@ def muninn_save(
       4. Always set title= for skimmability (max 60 chars, plain text).
 
     CATEGORY — classifies the type of content being stored:
+      ## Exploration
+      category="brainstorm"     — Unfiltered ideation: voice chat dumps, what-if explorations, early-stage thinking. Mark resolved=true when ideas graduate to decision/product.
       ## Product categories
       category="vision"         — Why this project exists: motivation, target users, market, business model
       category="product"        — What to build: scope decisions, UX principles, feature tradeoffs

@@ -1,5 +1,6 @@
 /** Category colors — single source of truth for graph + UI. */
 export const CATEGORY_COLORS: Record<string, string> = {
+  brainstorm: "#a855f7",
   vision: "#8b5cf6",
   product: "#f472b6",
   insight: "#06b6d4",
@@ -12,6 +13,7 @@ export const CATEGORY_COLORS: Record<string, string> = {
 
 /** Category display labels. */
 export const CATEGORY_LABELS: Record<string, string> = {
+  brainstorm: "Brainstorm",
   vision: "Vision",
   product: "Product",
   insight: "Insight",

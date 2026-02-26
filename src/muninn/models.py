@@ -43,6 +43,8 @@ class MemorySource:
 
 
 class MemoryCategory:
+    # Exploration
+    BRAINSTORM = "brainstorm"
     # Product axis
     VISION = "vision"
     PRODUCT = "product"
@@ -55,6 +57,7 @@ class MemoryCategory:
     ISSUE = "issue"
 
     _valid: frozenset[str] = frozenset({
+        "brainstorm",
         "vision", "product", "insight", "status",
         "architecture", "decision", "implementation", "issue",
     })
