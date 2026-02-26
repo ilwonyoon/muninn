@@ -17,7 +17,9 @@ from muninn.models import Memory, MemorySource, Project, ProjectStatus, validate
 _DEFAULT_DB_DIR = os.path.join(os.path.expanduser("~"), ".local", "share", "muninn")
 _DEFAULT_DB_NAME = "muninn.db"
 
-_CURRENT_SCHEMA_VERSION = 4
+_CURRENT_SCHEMA_VERSION = 6
+
+_UNSET = object()
 
 _SCHEMA_SQL = """\
 PRAGMA journal_mode=WAL;
@@ -41,6 +43,9 @@ CREATE TABLE IF NOT EXISTS memories (
     source TEXT DEFAULT 'conversation' CHECK(source IN ('conversation', 'github', 'manual')),
     embedding BLOB DEFAULT NULL,
     superseded_by TEXT,
+    parent_memory_id TEXT DEFAULT NULL,
+    title TEXT DEFAULT NULL,
+    resolved INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -56,6 +61,7 @@ CREATE INDEX IF NOT EXISTS idx_memories_superseded_by ON memories(superseded_by)
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     content,
+    title,
     content=memories,
     content_rowid=rowid,
     tokenize='porter'
@@ -63,21 +69,21 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
 
 -- FTS sync triggers
 CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-    INSERT INTO memories_fts(rowid, content) VALUES (new.rowid, new.content);
+    INSERT INTO memories_fts(rowid, content, title) VALUES (new.rowid, new.content, new.title);
 END;
 CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+    INSERT INTO memories_fts(memories_fts, rowid, content, title) VALUES('delete', old.rowid, old.content, old.title);
 END;
 CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-    INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.rowid, old.content);
-    INSERT INTO memories_fts(rowid, content) VALUES (new.rowid, new.content);
+    INSERT INTO memories_fts(memories_fts, rowid, content, title) VALUES('delete', old.rowid, old.content, old.title);
+    INSERT INTO memories_fts(rowid, content, title) VALUES (new.rowid, new.content, new.title);
 END;
 
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
     applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-INSERT OR IGNORE INTO schema_version (version) VALUES (3);
+INSERT OR IGNORE INTO schema_version (version) VALUES (6);
 """
 
 
@@ -123,6 +129,7 @@ def _row_to_project(row: sqlite3.Row, *, memory_count: int = 0) -> Project:
 
 def _row_to_memory(row: sqlite3.Row, *, tags: tuple[str, ...] | None = None) -> Memory:
     """Convert a sqlite3.Row from the memories table into a Memory."""
+    keys = row.keys()
     return Memory(
         id=row["id"],
         project_id=row["project_id"],
@@ -133,7 +140,10 @@ def _row_to_memory(row: sqlite3.Row, *, tags: tuple[str, ...] | None = None) -> 
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         tags=tags if tags is not None else (),
-        category=row["category"] if "category" in row.keys() else "status",
+        category=row["category"] if "category" in keys else "status",
+        parent_memory_id=row["parent_memory_id"] if "parent_memory_id" in keys else None,
+        title=row["title"] if "title" in keys else None,
+        resolved=bool(row["resolved"]) if "resolved" in keys else False,
     )
 
 
@@ -298,6 +308,43 @@ class MuninnStore:
 
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (5)")
 
+        if current_version < 6:
+            for col_sql in [
+                "ALTER TABLE memories ADD COLUMN parent_memory_id TEXT DEFAULT NULL",
+                "ALTER TABLE memories ADD COLUMN title TEXT DEFAULT NULL",
+                "ALTER TABLE memories ADD COLUMN resolved INTEGER DEFAULT 0",
+            ]:
+                try:
+                    conn.execute(col_sql)
+                except Exception:
+                    pass
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memories_parent ON memories(parent_memory_id)"
+            )
+            conn.executescript("""
+                DROP TRIGGER IF EXISTS memories_ai;
+                DROP TRIGGER IF EXISTS memories_ad;
+                DROP TRIGGER IF EXISTS memories_au;
+                DROP TABLE IF EXISTS memories_fts;
+
+                CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+                    content, title, content=memories, content_rowid=rowid, tokenize='porter'
+                );
+                CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+                    INSERT INTO memories_fts(rowid, content, title) VALUES (new.rowid, new.content, new.title);
+                END;
+                CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+                    INSERT INTO memories_fts(memories_fts, rowid, content, title) VALUES('delete', old.rowid, old.content, old.title);
+                END;
+                CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+                    INSERT INTO memories_fts(memories_fts, rowid, content, title) VALUES('delete', old.rowid, old.content, old.title);
+                    INSERT INTO memories_fts(rowid, content, title) VALUES (new.rowid, new.content, new.title);
+                END;
+
+                INSERT INTO memories_fts(rowid, content, title) SELECT rowid, content, title FROM memories;
+            """)
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (6)")
+
     # ------------------------------------------------------------------
     # Project operations
     # ------------------------------------------------------------------
@@ -450,10 +497,12 @@ class MuninnStore:
         self,
         project_id: str,
         content: str,
-        depth: int = 1,
+        depth: int = 2,
         source: str = MemorySource.CONVERSATION,
         tags: list[str] | tuple[str, ...] | None = None,
         category: str = "status",
+        parent_memory_id: str | None = None,
+        title: str | None = None,
     ) -> Memory:
         """Create a new memory and return it.
 
@@ -474,12 +523,24 @@ class MuninnStore:
         conn = self._get_connection()
         try:
             with conn:
+                if parent_memory_id is not None:
+                    parent_row = conn.execute(
+                        "SELECT depth, superseded_by FROM memories WHERE id = ?",
+                        (parent_memory_id,),
+                    ).fetchone()
+                    if parent_row is None:
+                        raise ValueError(f"Parent memory '{parent_memory_id}' not found.")
+                    if parent_row["superseded_by"] is not None:
+                        raise ValueError(f"Parent memory '{parent_memory_id}' is superseded/deleted.")
+                    from muninn.models import validate_parent_depth
+                    validate_parent_depth(parent_row["depth"], depth)
+
                 conn.execute(
                     """
-                    INSERT INTO memories (id, project_id, content, depth, source, category, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO memories (id, project_id, content, depth, source, category, parent_memory_id, title, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (memory_id, project_id, content, depth, source, category, now, now),
+                    (memory_id, project_id, content, depth, source, category, parent_memory_id, title, now, now),
                 )
 
                 for tag in tag_list:
@@ -504,6 +565,9 @@ class MuninnStore:
             tags=tuple(tag_list),
             category=category,
             superseded_by=None,
+            parent_memory_id=parent_memory_id,
+            title=title,
+            resolved=False,
             created_at=now,
             updated_at=now,
         )
@@ -511,9 +575,10 @@ class MuninnStore:
     def recall(
         self,
         project_id: str | None = None,
-        depth: int = 1,
+        depth: int = 2,
         max_chars: int = 8000,
         tags: list[str] | None = None,
+        parent_id: str | None = None,
     ) -> tuple[dict[str, list[Memory]], dict[str, int]]:
         """Load memories grouped by project, respecting a character budget.
 
@@ -575,6 +640,10 @@ class MuninnStore:
                             )
                         """
                         params.append(tag)
+
+                if parent_id is not None:
+                    query += " AND parent_memory_id = ?"
+                    params.append(parent_id)
 
                 query += " ORDER BY depth ASC, updated_at DESC"
 
@@ -723,11 +792,14 @@ class MuninnStore:
         depth: int | None = None,
         tags: list[str] | tuple[str, ...] | None = None,
         category: str | None = None,
+        parent_memory_id: object = _UNSET,
+        title: object = _UNSET,
+        resolved: bool | None = None,
     ) -> "Memory | None":
-        """Update an existing memory's content, depth, tags, and/or category.
+        """Update an existing memory's content, depth, tags, category, parent, title, and/or resolved.
 
         Accepts full UUIDs or unique prefixes (e.g. first 6-8 chars).
-        Only non-None parameters are updated. Returns the updated Memory,
+        Only non-None/non-UNSET parameters are updated. Returns the updated Memory,
         or None if the memory was not found or is superseded.
         """
         now = _now_iso()
@@ -735,10 +807,10 @@ class MuninnStore:
         try:
             with conn:
                 # Resolve prefix to full ID
-                resolved = self._resolve_memory_id(conn, memory_id)
-                if resolved is None:
+                resolved_id = self._resolve_memory_id(conn, memory_id)
+                if resolved_id is None:
                     return None
-                memory_id = resolved
+                memory_id = resolved_id
 
                 # Check memory exists and is not superseded
                 row = conn.execute(
@@ -760,6 +832,25 @@ class MuninnStore:
                 if category is not None:
                     validate_memory_category(category)
                     updates["category"] = category
+
+                if parent_memory_id is not _UNSET:
+                    if parent_memory_id is not None:
+                        parent_row = conn.execute(
+                            "SELECT depth, superseded_by FROM memories WHERE id = ?",
+                            (parent_memory_id,),
+                        ).fetchone()
+                        if parent_row is None:
+                            raise ValueError(f"Parent memory '{parent_memory_id}' not found.")
+                        if parent_row["superseded_by"] is not None:
+                            raise ValueError(f"Parent memory '{parent_memory_id}' is superseded/deleted.")
+                        effective_depth = depth if depth is not None else row["depth"]
+                        from muninn.models import validate_parent_depth
+                        validate_parent_depth(parent_row["depth"], effective_depth)
+                    updates["parent_memory_id"] = parent_memory_id
+                if title is not _UNSET:
+                    updates["title"] = title
+                if resolved is not None:
+                    updates["resolved"] = int(resolved)
 
                 set_clause = ", ".join(f"{col} = ?" for col in updates)
                 values = list(updates.values()) + [memory_id]
@@ -842,39 +933,29 @@ class MuninnStore:
         return _row_to_memory(row, tags=tags)
 
     def get_memory_tree(self, project_id: str) -> dict:
-        """Return a virtual tree structure for the tree view.
-
-        Groups memories by depth and category without requiring
-        explicit parent-child relationships.
-        """
+        """Build a hierarchical tree using parent_memory_id relationships."""
         conn = self._get_connection()
         try:
-            rows = conn.execute(
-                """
-                SELECT * FROM memories
-                WHERE project_id = ? AND superseded_by IS NULL
-                ORDER BY depth ASC, updated_at DESC
-                """,
-                (project_id,),
-            ).fetchall()
-            memory_ids = [r["id"] for r in rows]
-            tags_map = _fetch_tags_for_memories(conn, memory_ids)
+            with conn:
+                rows = conn.execute(
+                    "SELECT * FROM memories WHERE project_id = ? AND superseded_by IS NULL ORDER BY depth ASC, updated_at DESC",
+                    (project_id,),
+                ).fetchall()
+                mem_ids = [r["id"] for r in rows]
+                tags_map = _fetch_tags_for_memories(conn, mem_ids)
         finally:
             conn.close()
-
-        memories = [
-            _row_to_memory(r, tags=tags_map.get(r["id"], ()))
-            for r in rows
-        ]
-
-        roots = [m for m in memories if m.depth == 0]
-        groups: dict[str, list] = {}
-        for m in memories:
-            if m.depth == 0:
-                continue
-            groups.setdefault(m.category, []).append(m)
-
-        return {"roots": roots, "groups": groups}
+        memories = [_row_to_memory(r, tags=tags_map.get(r["id"], ())) for r in rows]
+        roots = []
+        children: dict[str, list] = {}
+        edges = []
+        for mem in memories:
+            if mem.parent_memory_id is None:
+                roots.append(mem)
+            else:
+                children.setdefault(mem.parent_memory_id, []).append(mem)
+                edges.append({"id": f"e-{mem.parent_memory_id[:8]}-{mem.id[:8]}", "source": mem.parent_memory_id, "target": mem.id})
+        return {"roots": roots, "children": children, "edges": edges}
 
     def get_depth_distribution(self, project_id: str) -> dict[int, int]:
         """Return depth → count mapping for active memories in a project."""

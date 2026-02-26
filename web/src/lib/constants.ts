@@ -1,5 +1,4 @@
-/** Shared category color palette and labels for the graph view. */
-
+/** Category colors — single source of truth for graph + UI. */
 export const CATEGORY_COLORS: Record<string, string> = {
   vision: "#8b5cf6",
   product: "#f472b6",
@@ -11,6 +10,7 @@ export const CATEGORY_COLORS: Record<string, string> = {
   issue: "#ef4444",
 };
 
+/** Category display labels. */
 export const CATEGORY_LABELS: Record<string, string> = {
   vision: "Vision",
   product: "Product",

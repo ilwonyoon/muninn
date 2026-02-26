@@ -87,6 +87,8 @@ export function createMemory(data: {
   depth?: number;
   tags?: string[];
   category?: string;
+  parent_memory_id?: string | null;
+  title?: string | null;
 }): Promise<Memory> {
   return fetchJSON("/memories", {
     method: "POST",
@@ -96,7 +98,7 @@ export function createMemory(data: {
 
 export function updateMemory(
   id: string,
-  data: Partial<Pick<Memory, "content" | "depth" | "tags" | "category">>
+  data: Partial<Pick<Memory, "content" | "depth" | "tags" | "category" | "parent_memory_id" | "title" | "resolved">>
 ): Promise<Memory> {
   return fetchJSON(`/memories/${id}`, {
     method: "PATCH",

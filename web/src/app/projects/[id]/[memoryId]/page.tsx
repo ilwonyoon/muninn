@@ -177,6 +177,32 @@ export default function MemoryDetailPage() {
         </div>
       </div>
 
+      {/* Title */}
+      {memory.title && (
+        <h1 className="mt-4 text-base font-semibold text-foreground">
+          {memory.title}
+        </h1>
+      )}
+
+      {/* Resolved badge + parent link */}
+      {(memory.resolved || memory.parent_memory_id) && (
+        <div className="mt-2 flex items-center gap-2">
+          {memory.resolved && (
+            <span className="inline-flex items-center gap-1 rounded border border-status-active/30 bg-status-active/10 px-2 py-0.5 text-[10px] font-medium text-status-active">
+              <Check className="h-3 w-3" /> resolved
+            </span>
+          )}
+          {memory.parent_memory_id && (
+            <Link
+              href={`/projects/${projectId}/${memory.parent_memory_id}`}
+              className="text-xs text-muted hover:text-foreground"
+            >
+              Parent: <span className="font-mono">{memory.parent_memory_id.slice(0, 8)}</span>
+            </Link>
+          )}
+        </div>
+      )}
+
       {/* Metadata */}
       <div className="mt-4 grid grid-cols-2 gap-y-2 text-xs">
         <div>

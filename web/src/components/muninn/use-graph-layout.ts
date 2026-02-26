@@ -1,150 +1,84 @@
 import { useMemo } from "react";
 import dagre from "@dagrejs/dagre";
 import type { Node, Edge } from "@xyflow/react";
-import type { MemoryTreeResponse } from "@/lib/types";
+import type { Memory, MemoryTreeResponse } from "@/lib/types";
 
-const MEMORY_WIDTH = 280;
-const MEMORY_HEIGHT = 130;
-const GROUP_WIDTH = 200;
-const GROUP_HEIGHT = 60;
+const NODE_WIDTH = 280;
+const NODE_HEIGHT = 130;
 
-export function useTreeLayout(
-  treeData: MemoryTreeResponse
-): { initialNodes: Node[]; initialEdges: Edge[] } {
-  return useMemo(() => {
-    const { roots, groups, edges: treeEdges } = treeData;
+const DEPTH_COLORS: Record<number, string> = {
+  0: "#10b981",  // green - identity
+  1: "#3b82f6",  // blue - index
+  2: "#f59e0b",  // amber - working
+  3: "#6b7280",  // gray - archive
+};
 
-    const g = new dagre.graphlib.Graph();
-    g.setGraph({ rankdir: "TB", nodesep: 50, ranksep: 100 });
-    g.setDefaultEdgeLabel(() => ({}));
+function buildLayout(treeData: MemoryTreeResponse): {
+  initialNodes: Node[];
+  initialEdges: Edge[];
+} {
+  const g = new dagre.graphlib.Graph();
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: "TB", nodesep: 60, ranksep: 100 });
 
-    // Add root nodes (depth 0)
-    for (const root of roots) {
-      g.setNode(root.id, { width: MEMORY_WIDTH, height: MEMORY_HEIGHT });
-    }
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
 
-    // Add category group nodes (virtual)
-    const activeCategories = Object.entries(groups).filter(
-      ([, mems]) => mems.length > 0
-    );
-    for (const [cat] of activeCategories) {
-      g.setNode(`group:${cat}`, { width: GROUP_WIDTH, height: GROUP_HEIGHT });
-    }
+  // Collect all memories: roots + all children
+  const allMemories: Memory[] = [...treeData.roots];
+  for (const children of Object.values(treeData.children)) {
+    allMemories.push(...children);
+  }
 
-    // Add memory nodes under groups
-    for (const [, mems] of activeCategories) {
-      for (const mem of mems) {
-        g.setNode(mem.id, { width: MEMORY_WIDTH, height: MEMORY_HEIGHT });
-      }
-    }
+  // Add all memory nodes
+  for (const mem of allMemories) {
+    g.setNode(mem.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+    nodes.push({
+      id: mem.id,
+      type: "memoryNode",
+      position: { x: 0, y: 0 },
+      data: { memory: mem, isGroup: false },
+    });
+  }
 
-    // Edges: root → category groups
-    for (const root of roots) {
-      for (const [cat] of activeCategories) {
-        g.setEdge(root.id, `group:${cat}`);
-      }
-    }
+  // Add edges from treeData.edges (parent → child)
+  for (const edge of treeData.edges) {
+    g.setEdge(edge.source, edge.target);
+    const sourceDepth = allMemories.find((m) => m.id === edge.source)?.depth ?? 1;
+    edges.push({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      type: "default",
+      style: {
+        stroke: DEPTH_COLORS[sourceDepth] ?? "#888",
+        strokeWidth: 1.5,
+      },
+    });
+  }
 
-    // Edges: category group → memories
-    for (const [cat, mems] of activeCategories) {
-      for (const mem of mems) {
-        g.setEdge(`group:${cat}`, mem.id);
-      }
-    }
+  // Run dagre layout
+  dagre.layout(g);
 
-    dagre.layout(g);
+  // Map dagre positions back
+  const positionedNodes = nodes.map((node) => {
+    const dagreNode = g.node(node.id);
+    if (!dagreNode) return node;
+    return {
+      ...node,
+      position: {
+        x: dagreNode.x - NODE_WIDTH / 2,
+        y: dagreNode.y - NODE_HEIGHT / 2,
+      },
+    };
+  });
 
-    // Build React Flow nodes
-    const rfNodes: Node[] = [];
+  return { initialNodes: positionedNodes, initialEdges: edges };
+}
 
-    // Root nodes
-    for (const root of roots) {
-      const pos = g.node(root.id);
-      rfNodes.push({
-        id: root.id,
-        type: "memoryNode",
-        position: {
-          x: pos ? pos.x - MEMORY_WIDTH / 2 : 0,
-          y: pos ? pos.y - MEMORY_HEIGHT / 2 : 0,
-        },
-        data: { ...root },
-      });
-    }
-
-    // Category group nodes
-    for (const [cat, mems] of activeCategories) {
-      const nodeId = `group:${cat}`;
-      const pos = g.node(nodeId);
-      rfNodes.push({
-        id: nodeId,
-        type: "categoryGroupNode",
-        position: {
-          x: pos ? pos.x - GROUP_WIDTH / 2 : 0,
-          y: pos ? pos.y - GROUP_HEIGHT / 2 : 0,
-        },
-        data: {
-          label: cat.charAt(0).toUpperCase() + cat.slice(1),
-          category: cat,
-          isGroup: true,
-          count: mems.length,
-        },
-      });
-    }
-
-    // Memory nodes under groups
-    for (const [, mems] of activeCategories) {
-      for (const mem of mems) {
-        const pos = g.node(mem.id);
-        rfNodes.push({
-          id: mem.id,
-          type: "memoryNode",
-          position: {
-            x: pos ? pos.x - MEMORY_WIDTH / 2 : 0,
-            y: pos ? pos.y - MEMORY_HEIGHT / 2 : 0,
-          },
-          data: { ...mem },
-        });
-      }
-    }
-
-    // Build React Flow edges
-    const rfEdges: Edge[] = [];
-
-    // Root → group edges (dashed, neutral)
-    for (const root of roots) {
-      for (const [cat] of activeCategories) {
-        rfEdges.push({
-          id: `e-${root.id.slice(0, 8)}-group-${cat}`,
-          source: root.id,
-          target: `group:${cat}`,
-          type: "default",
-          style: {
-            stroke: "var(--border-hover)",
-            strokeWidth: 1,
-            strokeDasharray: "5 5",
-          },
-          animated: false,
-        });
-      }
-    }
-
-    // Group → memory edges (solid, neutral)
-    for (const [cat, mems] of activeCategories) {
-      for (const mem of mems) {
-        rfEdges.push({
-          id: `e-group-${cat}-${mem.id.slice(0, 8)}`,
-          source: `group:${cat}`,
-          target: mem.id,
-          type: "default",
-          style: {
-            stroke: "var(--border-hover)",
-            strokeWidth: 1,
-          },
-          animated: false,
-        });
-      }
-    }
-
-    return { initialNodes: rfNodes, initialEdges: rfEdges };
-  }, [treeData]);
+export function useTreeLayout(treeData: MemoryTreeResponse): {
+  initialNodes: Node[];
+  initialEdges: Edge[];
+} {
+  return useMemo(() => buildLayout(treeData), [treeData]);
 }
