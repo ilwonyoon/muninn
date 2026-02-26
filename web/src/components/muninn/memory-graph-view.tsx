@@ -11,6 +11,7 @@ import {
   useEdgesState,
   ReactFlowProvider,
   type Node,
+  type NodeChange,
   type OnSelectionChangeParams,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -43,6 +44,68 @@ function MemoryGraphViewInner({
   const fittedRef = useRef(false);
   const [selectedMemoryNode, setSelectedMemoryNode] = useState<Node | null>(null);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+
+  // Undo/redo for node positions
+  type PositionSnapshot = Record<string, { x: number; y: number }>;
+  const undoStack = useRef<PositionSnapshot[]>([]);
+  const redoStack = useRef<PositionSnapshot[]>([]);
+  const isDragging = useRef(false);
+
+  const capturePositions = useCallback((): PositionSnapshot => {
+    const snap: PositionSnapshot = {};
+    for (const n of nodes) {
+      snap[n.id] = { ...n.position };
+    }
+    return snap;
+  }, [nodes]);
+
+  const handleNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      // Detect drag start → capture snapshot for undo
+      const dragStart = changes.some(
+        (c) => c.type === "position" && c.dragging === true
+      );
+      if (dragStart && !isDragging.current) {
+        isDragging.current = true;
+        undoStack.current.push(capturePositions());
+        redoStack.current = [];
+      }
+      const dragEnd = changes.some(
+        (c) => c.type === "position" && c.dragging === false
+      );
+      if (dragEnd) {
+        isDragging.current = false;
+      }
+      onNodesChange(changes);
+    },
+    [onNodesChange, capturePositions]
+  );
+
+  const applyPositions = useCallback(
+    (snap: PositionSnapshot) => {
+      setNodes((nds) =>
+        nds.map((n) => {
+          const pos = snap[n.id];
+          return pos ? { ...n, position: pos } : n;
+        })
+      );
+    },
+    [setNodes]
+  );
+
+  const undo = useCallback(() => {
+    if (undoStack.current.length === 0) return;
+    redoStack.current.push(capturePositions());
+    const prev = undoStack.current.pop()!;
+    applyPositions(prev);
+  }, [capturePositions, applyPositions]);
+
+  const redo = useCallback(() => {
+    if (redoStack.current.length === 0) return;
+    undoStack.current.push(capturePositions());
+    const next = redoStack.current.pop()!;
+    applyPositions(next);
+  }, [capturePositions, applyPositions]);
 
   const toggleCategory = useCallback((category: string) => {
     setCollapsedCategories((prev) => {
@@ -112,11 +175,26 @@ function MemoryGraphViewInner({
     []
   );
 
-  // DEL / Backspace → delete selected memory node (with confirmation via parent)
+  // Keyboard shortcuts: DEL (delete), Ctrl+Z (undo), Ctrl+Shift+Z (redo)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      // Undo: Ctrl+Z (or Cmd+Z on Mac)
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === "z") {
+        e.preventDefault();
+        undo();
+        return;
+      }
+      // Redo: Ctrl+Shift+Z (or Cmd+Shift+Z on Mac)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "z") {
+        e.preventDefault();
+        redo();
+        return;
+      }
+
+      // DEL / Backspace → delete selected memory node
       if (e.key !== "Delete" && e.key !== "Backspace") return;
       if (!selectedMemoryNode || selectedMemoryNode.type !== "memoryNode") return;
       e.preventDefault();
@@ -125,7 +203,7 @@ function MemoryGraphViewInner({
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [selectedMemoryNode, onDeleteRequest]);
+  }, [selectedMemoryNode, onDeleteRequest, undo, redo]);
 
   // Fit view on first render
   useEffect(() => {
@@ -141,7 +219,7 @@ function MemoryGraphViewInner({
     <ReactFlow
       nodes={nodes}
       edges={edges}
-      onNodesChange={onNodesChange}
+      onNodesChange={handleNodesChange}
       onEdgesChange={onEdgesChange}
       nodeTypes={nodeTypes}
       onNodeClick={handleNodeClick}

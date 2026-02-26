@@ -57,7 +57,7 @@ export default function ProjectDetailPage() {
   const [panelMemoryId, setPanelMemoryId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const [viewMode, setViewMode] = useState<"list" | "graph">("list");
+  const [viewMode, setViewMode] = useState<"list" | "graph">("graph");
   const [graphData, setGraphData] = useState<MemoryTreeResponse | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
 
@@ -253,22 +253,9 @@ export default function ProjectDetailPage() {
             <div className="flex items-center rounded border border-border">
               <button
                 type="button"
-                onClick={() => setViewMode("list")}
-                className={cn(
-                  "rounded-l px-2 py-1 text-xs transition-colors",
-                  viewMode === "list"
-                    ? "bg-card-hover text-foreground"
-                    : "text-muted hover:text-foreground"
-                )}
-                title="List view"
-              >
-                <List className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
                 onClick={() => setViewMode("graph")}
                 className={cn(
-                  "rounded-r px-2 py-1 text-xs transition-colors",
+                  "rounded-l px-2 py-1 text-xs transition-colors",
                   viewMode === "graph"
                     ? "bg-card-hover text-foreground"
                     : "text-muted hover:text-foreground"
@@ -276,6 +263,19 @@ export default function ProjectDetailPage() {
                 title="Graph view"
               >
                 <Network className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("list")}
+                className={cn(
+                  "rounded-r px-2 py-1 text-xs transition-colors",
+                  viewMode === "list"
+                    ? "bg-card-hover text-foreground"
+                    : "text-muted hover:text-foreground"
+                )}
+                title="List view"
+              >
+                <List className="h-3.5 w-3.5" />
               </button>
             </div>
             <button
