@@ -159,7 +159,7 @@ def _create_mcp(
                 default_scopes=["muninn"],
             ),
             revocation_options=RevocationOptions(enabled=True),
-            required_scopes=[],
+            required_scopes=["muninn"],
         )
 
     mcp = FastMCP(
