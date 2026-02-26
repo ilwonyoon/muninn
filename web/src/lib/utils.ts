@@ -57,19 +57,12 @@ export function extractTitle(content: string, maxLen = 60): string {
   return truncate(stripMarkdown(firstLine), maxLen);
 }
 
-/** Extract body preview — content after the title line, or remainder of a long first line. */
-export function extractBody(content: string, maxLen = 120): string {
-  const lines = content.split("\n").map((l) => l.trim());
-  const firstIdx = lines.findIndex((l) => l.length > 0);
-  if (firstIdx < 0) return "";
-  const rest = lines
-    .slice(firstIdx + 1)
+/** Extract body preview — full content flattened, markdown stripped. */
+export function extractBody(content: string, maxLen = 140): string {
+  const flat = content
+    .split("\n")
+    .map((l) => l.trim())
     .filter((l) => l.length > 0)
-    .join(" ")
-    .trim();
-  if (rest) return truncate(stripMarkdown(rest), maxLen);
-  // Single-line content: show the part after the title truncation point
-  const fullFirst = stripMarkdown(lines[firstIdx]);
-  if (fullFirst.length > 60) return truncate(fullFirst.slice(60).trim(), maxLen);
-  return "";
+    .join(" ");
+  return truncate(stripMarkdown(flat), maxLen);
 }
