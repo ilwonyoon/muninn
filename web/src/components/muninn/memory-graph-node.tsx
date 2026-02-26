@@ -4,18 +4,26 @@ import { memo } from "react";
 import { Handle, Position } from "@xyflow/react";
 import type { NodeProps } from "@xyflow/react";
 import type { Memory } from "@/lib/types";
-import { truncate, cn } from "@/lib/utils";
+import { cn, extractTitle, extractBody } from "@/lib/utils";
 import { DepthBadge } from "@/components/muninn/depth-badge";
-import { TagPill } from "@/components/muninn/tag-pill";
+import { CATEGORY_COLORS, CATEGORY_LABELS } from "@/lib/constants";
 
 // Neutral border for all memory nodes — category group provides the color signal
 const NEUTRAL_BORDER = "border-[var(--border-default)]";
 
-// Node data type — just Memory
+const GENERIC_TAGS = new Set(["status", "context", "code", "reference", "update", "manual"]);
+
+function primaryTag(tags: string[]): string | null {
+  if (tags.length === 0) return null;
+  return tags.find((t) => !GENERIC_TAGS.has(t)) ?? tags[0];
+}
+
 type MemoryNodeData = Memory;
 
 function MemoryGraphNodeInner({ data }: NodeProps) {
   const mem = data as unknown as MemoryNodeData;
+  const tag = primaryTag(mem.tags);
+
   return (
     <div
       className={cn(
@@ -26,21 +34,21 @@ function MemoryGraphNodeInner({ data }: NodeProps) {
       <Handle type="target" position={Position.Top} className="!bg-border-hover !w-2 !h-2" />
       <div className="flex items-center justify-between">
         <DepthBadge depth={mem.depth} />
+        {tag && (
+          <span className="rounded bg-card-hover px-1.5 py-0.5 font-mono text-[10px] text-muted">
+            {tag}
+          </span>
+        )}
+      </div>
+      <div className="mt-1.5 text-xs font-medium leading-snug text-foreground line-clamp-1">
+        {extractTitle(mem.content)}
+      </div>
+      <div className="mt-0.5 text-xs leading-snug text-muted line-clamp-2">
+        {extractBody(mem.content)}
+      </div>
+      <div className="mt-1.5 text-right">
         <span className="font-mono text-[10px] text-muted">{mem.short_id}</span>
       </div>
-      <div className="mt-1.5 text-sm leading-snug text-foreground line-clamp-3">
-        {truncate(mem.content, 100)}
-      </div>
-      {mem.tags.length > 0 && (
-        <div className="mt-1.5 flex flex-wrap gap-1">
-          {mem.tags.slice(0, 3).map((tag) => (
-            <TagPill key={tag} tag={tag} />
-          ))}
-          {mem.tags.length > 3 && (
-            <span className="text-[10px] text-muted">+{mem.tags.length - 3}</span>
-          )}
-        </div>
-      )}
       <Handle type="source" position={Position.Bottom} className="!bg-border-hover !w-2 !h-2" />
     </div>
   );
@@ -48,34 +56,12 @@ function MemoryGraphNodeInner({ data }: NodeProps) {
 
 export const MemoryGraphNode = memo(MemoryGraphNodeInner);
 
-// Category group node colors and labels
-const CATEGORY_COLORS: Record<string, string> = {
-  vision: "#8b5cf6",
-  product: "#ec4899",
-  insight: "#06b6d4",
-  status: "#00cc88",
-  architecture: "#3b82f6",
-  decision: "#f59e0b",
-  implementation: "#6366f1",
-  issue: "#ef4444",
-};
-
-const CATEGORY_LABELS: Record<string, string> = {
-  vision: "Vision",
-  product: "Product",
-  insight: "Insight",
-  status: "Status",
-  architecture: "Architecture",
-  decision: "Decision",
-  implementation: "Implementation",
-  issue: "Issue",
-};
-
 interface CategoryGroupData {
   label: string;
   category: string;
   isGroup: boolean;
   count: number;
+  collapsed?: boolean;
 }
 
 function CategoryGroupNodeInner({ data }: NodeProps) {
@@ -85,17 +71,19 @@ function CategoryGroupNodeInner({ data }: NodeProps) {
 
   return (
     <div
-      className="flex w-[200px] flex-col items-center justify-center rounded-lg border-2 px-4 py-2 shadow-sm"
+      className="flex w-[200px] cursor-pointer flex-col items-center justify-center rounded-lg border px-4 py-2.5"
       style={{
-        borderColor: color,
-        backgroundColor: `${color}15`,
+        borderColor: `${color}40`,
+        backgroundColor: `${color}18`,
       }}
     >
       <Handle type="target" position={Position.Top} className="!bg-border-hover !w-2 !h-2" />
-      <span className="text-sm font-semibold" style={{ color }}>
+      <span className="text-sm font-medium" style={{ color }}>
         {label}
       </span>
-      <span className="text-[10px] text-muted">{group.count} memories</span>
+      <span className="text-[10px] text-muted">
+        {group.count} memories {group.collapsed ? "▸" : "▾"}
+      </span>
       <Handle type="source" position={Position.Bottom} className="!bg-border-hover !w-2 !h-2" />
     </div>
   );

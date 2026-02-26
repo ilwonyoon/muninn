@@ -6,10 +6,10 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 const DEPTH_LABELS: Record<number, string> = {
-  0: "summary",
-  1: "context",
-  2: "detailed",
-  3: "full",
+  0: "L0",
+  1: "L1",
+  2: "L2",
+  3: "L3",
 };
 
 export function depthLabel(depth: number): string {
@@ -35,4 +35,41 @@ export function relativeTime(isoTimestamp: string): string {
 export function truncate(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str;
   return str.slice(0, maxLen - 1) + "…";
+}
+
+/** Strip common markdown syntax for plain-text display. */
+export function stripMarkdown(text: string): string {
+  return text
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/`(.+?)`/g, "$1")
+    .replace(/\[(.+?)\]\(.+?\)/g, "$1")
+    .replace(/^[-*+]\s+/gm, "")
+    .replace(/^\d+\.\s+/gm, "")
+    .trim();
+}
+
+/** Extract title from memory content — first non-empty line, markdown stripped. */
+export function extractTitle(content: string, maxLen = 60): string {
+  const lines = content.split("\n").map((l) => l.trim());
+  const firstLine = lines.find((l) => l.length > 0) ?? "";
+  return truncate(stripMarkdown(firstLine), maxLen);
+}
+
+/** Extract body preview — content after the title line, or remainder of a long first line. */
+export function extractBody(content: string, maxLen = 120): string {
+  const lines = content.split("\n").map((l) => l.trim());
+  const firstIdx = lines.findIndex((l) => l.length > 0);
+  if (firstIdx < 0) return "";
+  const rest = lines
+    .slice(firstIdx + 1)
+    .filter((l) => l.length > 0)
+    .join(" ")
+    .trim();
+  if (rest) return truncate(stripMarkdown(rest), maxLen);
+  // Single-line content: show the part after the title truncation point
+  const fullFirst = stripMarkdown(lines[firstIdx]);
+  if (fullFirst.length > 60) return truncate(fullFirst.slice(60).trim(), maxLen);
+  return "";
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { MarkdownHooks as Markdown } from "react-markdown";
+import Markdown from "react-markdown";
 import { cn } from "@/lib/utils";
 
 interface MarkdownContentProps {
