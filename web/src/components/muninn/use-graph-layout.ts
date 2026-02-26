@@ -1,79 +1,161 @@
 import { useMemo } from "react";
 import dagre from "@dagrejs/dagre";
 import type { Node, Edge } from "@xyflow/react";
-import type { Memory, GraphEdge } from "@/lib/types";
+import type { MemoryTreeResponse } from "@/lib/types";
 
-type MemoryNodeData = Memory & Record<string, unknown>;
-type MemoryNode = Node<MemoryNodeData>;
+const MEMORY_WIDTH = 280;
+const MEMORY_HEIGHT = 130;
+const GROUP_WIDTH = 200;
+const GROUP_HEIGHT = 60;
 
-const NODE_WIDTH = 280;
-const NODE_HEIGHT = 130;
-const LAYER_HEIGHT = 200;
+const CATEGORY_COLORS: Record<string, string> = {
+  vision: "#8b5cf6",
+  product: "#ec4899",
+  insight: "#06b6d4",
+  status: "#00cc88",
+  architecture: "#3b82f6",
+  decision: "#f59e0b",
+  implementation: "#6366f1",
+  issue: "#ef4444",
+};
 
-export function useGraphLayout(
-  memories: Memory[],
-  edges: GraphEdge[]
-): { nodes: MemoryNode[]; edges: Edge[] } {
+export function useTreeLayout(
+  treeData: MemoryTreeResponse
+): { nodes: Node[]; edges: Edge[] } {
   return useMemo(() => {
+    const { roots, groups, edges: treeEdges } = treeData;
+
     const g = new dagre.graphlib.Graph();
-    g.setGraph({ rankdir: "TB", nodesep: 40, ranksep: 80 });
+    g.setGraph({ rankdir: "TB", nodesep: 50, ranksep: 100 });
     g.setDefaultEdgeLabel(() => ({}));
 
-    // Add nodes
-    for (const mem of memories) {
-      g.setNode(mem.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+    // Add root nodes (depth 0)
+    for (const root of roots) {
+      g.setNode(root.id, { width: MEMORY_WIDTH, height: MEMORY_HEIGHT });
     }
 
-    // Add edges
-    for (const edge of edges) {
-      g.setEdge(edge.source, edge.target);
+    // Add category group nodes (virtual)
+    const activeCategories = Object.entries(groups).filter(
+      ([, mems]) => mems.length > 0
+    );
+    for (const [cat] of activeCategories) {
+      g.setNode(`group:${cat}`, { width: GROUP_WIDTH, height: GROUP_HEIGHT });
+    }
+
+    // Add memory nodes under groups
+    for (const [, mems] of activeCategories) {
+      for (const mem of mems) {
+        g.setNode(mem.id, { width: MEMORY_WIDTH, height: MEMORY_HEIGHT });
+      }
+    }
+
+    // Edges: root → category groups
+    for (const root of roots) {
+      for (const [cat] of activeCategories) {
+        g.setEdge(root.id, `group:${cat}`);
+      }
+    }
+
+    // Edges: category group → memories
+    for (const [cat, mems] of activeCategories) {
+      for (const mem of mems) {
+        g.setEdge(`group:${cat}`, mem.id);
+      }
     }
 
     dagre.layout(g);
 
-    // Convert to React Flow format
-    // Override y with depth-based banding for consistent layers
-    const rfNodes: MemoryNode[] = memories.map((mem) => {
-      const pos = g.node(mem.id);
-      return {
-        id: mem.id,
+    // Build React Flow nodes
+    const rfNodes: Node[] = [];
+
+    // Root nodes
+    for (const root of roots) {
+      const pos = g.node(root.id);
+      rfNodes.push({
+        id: root.id,
         type: "memoryNode",
         position: {
-          x: pos ? pos.x - NODE_WIDTH / 2 : 0,
-          y: mem.depth * LAYER_HEIGHT,
+          x: pos ? pos.x - MEMORY_WIDTH / 2 : 0,
+          y: pos ? pos.y - MEMORY_HEIGHT / 2 : 0,
         },
-        data: { ...mem } as MemoryNodeData,
-      };
-    });
-
-    // Group by depth and spread orphans (nodes dagre placed all at x=0)
-    const depthGroups = new Map<number, MemoryNode[]>();
-    for (const node of rfNodes) {
-      const d = node.data.depth;
-      if (!depthGroups.has(d)) depthGroups.set(d, []);
-      depthGroups.get(d)!.push(node);
+        data: { ...root },
+      });
     }
-    for (const [, group] of depthGroups) {
-      const xs = group.map((n) => n.position.x);
-      const allSame = xs.every((x) => x === xs[0]);
-      if (allSame && group.length > 1) {
-        const totalWidth = group.length * (NODE_WIDTH + 40) - 40;
-        const startX = -totalWidth / 2;
-        group.forEach((node, i) => {
-          node.position.x = startX + i * (NODE_WIDTH + 40);
+
+    // Category group nodes
+    for (const [cat, mems] of activeCategories) {
+      const nodeId = `group:${cat}`;
+      const pos = g.node(nodeId);
+      rfNodes.push({
+        id: nodeId,
+        type: "categoryGroupNode",
+        position: {
+          x: pos ? pos.x - GROUP_WIDTH / 2 : 0,
+          y: pos ? pos.y - GROUP_HEIGHT / 2 : 0,
+        },
+        data: {
+          label: cat.charAt(0).toUpperCase() + cat.slice(1),
+          category: cat,
+          isGroup: true,
+          count: mems.length,
+        },
+      });
+    }
+
+    // Memory nodes under groups
+    for (const [, mems] of activeCategories) {
+      for (const mem of mems) {
+        const pos = g.node(mem.id);
+        rfNodes.push({
+          id: mem.id,
+          type: "memoryNode",
+          position: {
+            x: pos ? pos.x - MEMORY_WIDTH / 2 : 0,
+            y: pos ? pos.y - MEMORY_HEIGHT / 2 : 0,
+          },
+          data: { ...mem },
         });
       }
     }
 
-    const rfEdges: Edge[] = edges.map((e) => ({
-      id: e.id,
-      source: e.source,
-      target: e.target,
-      type: "smoothstep",
-      style: { stroke: "var(--border-hover)", strokeWidth: 1.5 },
-      animated: false,
-    }));
+    // Build React Flow edges
+    const rfEdges: Edge[] = [];
+
+    // Root → group edges (dashed)
+    for (const root of roots) {
+      for (const [cat] of activeCategories) {
+        rfEdges.push({
+          id: `e-${root.id.slice(0, 8)}-group-${cat}`,
+          source: root.id,
+          target: `group:${cat}`,
+          type: "smoothstep",
+          style: {
+            stroke: CATEGORY_COLORS[cat] ?? "var(--border-hover)",
+            strokeWidth: 1.5,
+            strokeDasharray: "5 5",
+          },
+          animated: false,
+        });
+      }
+    }
+
+    // Group → memory edges (solid)
+    for (const [cat, mems] of activeCategories) {
+      for (const mem of mems) {
+        rfEdges.push({
+          id: `e-group-${cat}-${mem.id.slice(0, 8)}`,
+          source: `group:${cat}`,
+          target: mem.id,
+          type: "smoothstep",
+          style: {
+            stroke: CATEGORY_COLORS[cat] ?? "var(--border-hover)",
+            strokeWidth: 1.5,
+          },
+          animated: false,
+        });
+      }
+    }
 
     return { nodes: rfNodes, edges: rfEdges };
-  }, [memories, edges]);
+  }, [treeData]);
 }

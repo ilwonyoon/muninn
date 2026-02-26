@@ -52,3 +52,58 @@ function MemoryGraphNodeInner({ data }: NodeProps) {
 }
 
 export const MemoryGraphNode = memo(MemoryGraphNodeInner);
+
+// Category group node colors and labels
+const CATEGORY_COLORS: Record<string, string> = {
+  vision: "#8b5cf6",
+  product: "#ec4899",
+  insight: "#06b6d4",
+  status: "#00cc88",
+  architecture: "#3b82f6",
+  decision: "#f59e0b",
+  implementation: "#6366f1",
+  issue: "#ef4444",
+};
+
+const CATEGORY_LABELS: Record<string, string> = {
+  vision: "Vision",
+  product: "Product",
+  insight: "Insight",
+  status: "Status",
+  architecture: "Architecture",
+  decision: "Decision",
+  implementation: "Implementation",
+  issue: "Issue",
+};
+
+interface CategoryGroupData {
+  label: string;
+  category: string;
+  isGroup: boolean;
+  count: number;
+}
+
+function CategoryGroupNodeInner({ data }: NodeProps) {
+  const group = data as unknown as CategoryGroupData;
+  const color = CATEGORY_COLORS[group.category] ?? "#666666";
+  const label = CATEGORY_LABELS[group.category] ?? group.label;
+
+  return (
+    <div
+      className="flex w-[200px] flex-col items-center justify-center rounded-lg border-2 px-4 py-2 shadow-sm"
+      style={{
+        borderColor: color,
+        backgroundColor: `${color}15`,
+      }}
+    >
+      <Handle type="target" position={Position.Top} className="!bg-border-hover !w-2 !h-2" />
+      <span className="text-sm font-semibold" style={{ color }}>
+        {label}
+      </span>
+      <span className="text-[10px] text-muted">{group.count} memories</span>
+      <Handle type="source" position={Position.Bottom} className="!bg-border-hover !w-2 !h-2" />
+    </div>
+  );
+}
+
+export const CategoryGroupNode = memo(CategoryGroupNodeInner);

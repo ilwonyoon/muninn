@@ -10,9 +10,9 @@ import {
   listTags,
   updateProject,
   deleteMemory,
-  getMemoryGraph,
+  getMemoryTree,
 } from "@/lib/api";
-import type { Memory, MemoriesResponse, Project, MemoryGraphResponse } from "@/lib/types";
+import type { Memory, MemoriesResponse, Project, MemoryTreeResponse } from "@/lib/types";
 import { MemoryGraphView } from "@/components/muninn/memory-graph-view";
 import { cn } from "@/lib/utils";
 import { StatusDot } from "@/components/muninn/status-dot";
@@ -58,7 +58,7 @@ export default function ProjectDetailPage() {
   const listRef = useRef<HTMLDivElement>(null);
 
   const [viewMode, setViewMode] = useState<"list" | "graph">("list");
-  const [graphData, setGraphData] = useState<MemoryGraphResponse | null>(null);
+  const [graphData, setGraphData] = useState<MemoryTreeResponse | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
 
   // Always fetch all memories (depth=3 gets everything)
@@ -89,7 +89,7 @@ export default function ProjectDetailPage() {
     if (viewMode !== "graph" || !projectId) return;
     if (graphData) return; // already loaded
     setGraphLoading(true);
-    getMemoryGraph(projectId)
+    getMemoryTree(projectId)
       .then(setGraphData)
       .catch(() => {})
       .finally(() => setGraphLoading(false));
@@ -455,8 +455,7 @@ export default function ProjectDetailPage() {
               </div>
             ) : graphData ? (
               <MemoryGraphView
-                memories={graphData.nodes}
-                edges={graphData.edges}
+                treeData={graphData}
                 activeMemoryId={panelMemoryId}
                 onNodeSelect={(shortId) => setPanelMemoryId(shortId)}
               />

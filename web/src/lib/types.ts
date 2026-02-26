@@ -23,7 +23,7 @@ export interface Memory {
   source: "conversation" | "github" | "manual";
   tags: string[];
   superseded_by: string | null;
-  parent_memory_id: string | null;
+  category: "vision" | "product" | "insight" | "status" | "architecture" | "decision" | "implementation" | "issue";
   created_at: string;
   updated_at: string;
 }
@@ -58,9 +58,17 @@ export interface GraphEdge {
   target: string;
 }
 
-export interface MemoryGraphResponse {
-  nodes: Memory[];
-  edges: GraphEdge[];
+export interface TreeEdge {
+  id: string;
+  source: string;
+  target: string;
+  category: string;
+}
+
+export interface MemoryTreeResponse {
+  roots: Memory[];
+  groups: Record<string, Memory[]>;
+  edges: TreeEdge[];
 }
 
 export interface ApiError {
