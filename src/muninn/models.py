@@ -42,6 +42,32 @@ class MemorySource:
         return cls._valid
 
 
+class MemoryCategory:
+    # Product axis
+    VISION = "vision"
+    PRODUCT = "product"
+    INSIGHT = "insight"
+    STATUS = "status"
+    # Engineering axis
+    ARCHITECTURE = "architecture"
+    DECISION = "decision"
+    IMPLEMENTATION = "implementation"
+    ISSUE = "issue"
+
+    _valid: frozenset[str] = frozenset({
+        "vision", "product", "insight", "status",
+        "architecture", "decision", "implementation", "issue",
+    })
+
+    @classmethod
+    def is_valid(cls, value: str) -> bool:
+        return value in cls._valid
+
+    @classmethod
+    def values(cls) -> frozenset[str]:
+        return cls._valid
+
+
 # ---------------------------------------------------------------------------
 # Validation helpers
 # ---------------------------------------------------------------------------
@@ -69,6 +95,15 @@ def validate_memory_source(source: str) -> None:
         raise ValueError(
             f"Invalid memory source {source!r}. "
             f"Must be one of: {sorted(MemorySource.values())}"
+        )
+
+
+def validate_memory_category(category: str) -> None:
+    """Raise ValueError if *category* is not a valid MemoryCategory."""
+    if not MemoryCategory.is_valid(category):
+        raise ValueError(
+            f"Invalid memory category {category!r}. "
+            f"Must be one of: {sorted(MemoryCategory.values())}"
         )
 
 
@@ -133,12 +168,13 @@ class Memory:
     depth: int = 1
     source: str = MemorySource.CONVERSATION
     tags: tuple[str, ...] = field(default_factory=tuple)
+    category: str = MemoryCategory.STATUS
     superseded_by: str | None = None
-    parent_memory_id: str | None = None
 
     def __post_init__(self) -> None:
         validate_memory_depth(self.depth)
         validate_memory_source(self.source)
+        validate_memory_category(self.category)
         for tag in self.tags:
             if not tag or not tag.strip():
                 raise ValueError("Tags must be non-empty strings.")

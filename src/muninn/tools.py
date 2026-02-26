@@ -81,8 +81,21 @@ def muninn_save(
     content: str,
     depth: int = 1,
     tags: tuple[str, ...] | list[str] | None = None,
+    category: str = "status",
 ) -> str:
     """Save a distilled memory to a project. Auto-creates the project if it does not exist.
+
+    CATEGORY — classifies the type of content being stored:
+      ## Product categories
+      category="vision"         — Why this project exists: motivation, target users, market, business model
+      category="product"        — What to build: scope decisions, UX principles, feature tradeoffs
+      category="insight"        — User observations, usage patterns, discovered behaviors, feedback
+      category="status"         — Current state: milestones, progress, what's next (DEFAULT)
+      ## Engineering categories
+      category="architecture"   — System structure: tech stack, modules, data models, schemas
+      category="decision"       — Engineering rationale: why this approach, tradeoffs considered
+      category="implementation" — Code-level facts: config, commands, file paths, API contracts
+      category="issue"          — Bugs, errors, blockers, unresolved hurdles
 
     CONTENT QUALITY — never save raw conversation. Always distill:
       Bad:  "User said they want SQLite and I suggested WAL mode and they agreed"
@@ -131,6 +144,7 @@ def muninn_save(
             content=content,
             depth=depth,
             tags=tags,
+            category=category,
         )
 
         # Re-fetch project so memory_count is up-to-date.

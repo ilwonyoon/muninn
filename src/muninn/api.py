@@ -193,7 +193,7 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
                 depth=depth,
                 source=body.get("source", "manual"),
                 tags=body.get("tags"),
-                parent_memory_id=body.get("parent_memory_id"),
+                category=body.get("category", "status"),
             )
         except ValueError as exc:
             return JSONResponse(
@@ -224,8 +224,8 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
                 )
         if "tags" in body:
             kwargs["tags"] = body["tags"]
-        if "parent_memory_id" in body:
-            kwargs["parent_memory_id"] = body["parent_memory_id"]
+        if "category" in body:
+            kwargs["category"] = body["category"]
         if not kwargs:
             return JSONResponse(
                 {"error": "No valid fields to update", "code": "BAD_REQUEST"},
@@ -302,10 +302,10 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
         return JSONResponse([_memory_to_dict(m) for m in chain])
 
     # ------------------------------------------------------------------
-    # Graph
+    # Tree
     # ------------------------------------------------------------------
 
-    async def get_memory_graph(request: Request) -> JSONResponse:
+    async def get_memory_tree(request: Request) -> JSONResponse:
         project_id = request.path_params["project_id"]
         project = store.get_project(project_id)
         if project is None:
@@ -313,17 +313,24 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
                 {"error": f"Project '{project_id}' not found", "code": "NOT_FOUND"},
                 status_code=404,
             )
-        memories = store.get_memory_graph(project_id)
-        nodes = [_memory_to_dict(m) for m in memories]
+        tree = store.get_memory_tree(project_id)
+        roots = [_memory_to_dict(m) for m in tree["roots"]]
+        groups = {
+            cat: [_memory_to_dict(m) for m in mems]
+            for cat, mems in tree["groups"].items()
+        }
+        # Compute virtual edges: each root connects to its category groups
         edges = []
-        for m in memories:
-            if m.parent_memory_id:
-                edges.append({
-                    "id": f"e-{m.parent_memory_id[:8]}-{m.id[:8]}",
-                    "source": m.parent_memory_id,
-                    "target": m.id,
-                })
-        return JSONResponse({"nodes": nodes, "edges": edges})
+        for root in tree["roots"]:
+            for cat, mems in tree["groups"].items():
+                for m in mems:
+                    edges.append({
+                        "id": f"e-{root.id[:8]}-{m.id[:8]}",
+                        "source": root.id,
+                        "target": m.id,
+                        "category": cat,
+                    })
+        return JSONResponse({"roots": roots, "groups": groups, "edges": edges})
 
     # ------------------------------------------------------------------
     # Route table
@@ -335,7 +342,7 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
         Route("/projects/{project_id}", get_project, methods=["GET"]),
         Route("/projects/{project_id}", update_project, methods=["PATCH"]),
         Route("/projects/{project_id}/memories", list_memories, methods=["GET"]),
-        Route("/projects/{project_id}/graph", get_memory_graph, methods=["GET"]),
+        Route("/projects/{project_id}/tree", get_memory_tree, methods=["GET"]),
         Route("/memories", create_memory, methods=["POST"]),
         Route("/memories/{memory_id}", get_memory, methods=["GET"]),
         Route("/memories/{memory_id}", update_memory, methods=["PATCH"]),

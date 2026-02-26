@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from muninn.models import Memory, MemorySource, Project, ProjectStatus, validate_memory_content, validate_tags
+from muninn.models import Memory, MemorySource, Project, ProjectStatus, validate_memory_content, validate_memory_category, validate_tags
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -133,7 +133,7 @@ def _row_to_memory(row: sqlite3.Row, *, tags: tuple[str, ...] | None = None) -> 
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         tags=tags if tags is not None else (),
-        parent_memory_id=row["parent_memory_id"] if "parent_memory_id" in row.keys() else None,
+        category=row["category"] if "category" in row.keys() else "status",
     )
 
 
@@ -231,22 +231,72 @@ class MuninnStore:
                 pass  # Column already exists (fresh v3 schema).
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (3)")
 
-        # v4: add parent_memory_id column.
-        # Also repairs state where version was bumped to 4 but column is missing
-        # (caused by a bug in a prior _SCHEMA_SQL that inserted version 4 eagerly).
+        # v4: add category column for content type classification.
+        # Also repairs state where version was bumped to 4 but column is missing.
         cols = {r[1] for r in conn.execute("PRAGMA table_info(memories)").fetchall()}
-        if current_version < 4 or "parent_memory_id" not in cols:
-            if "parent_memory_id" not in cols:
+
+        if current_version < 4 or "category" not in cols:
+            if "category" not in cols:
                 try:
                     conn.execute(
-                        "ALTER TABLE memories ADD COLUMN parent_memory_id TEXT DEFAULT NULL"
+                        "ALTER TABLE memories ADD COLUMN category TEXT DEFAULT 'context'"
                     )
                 except Exception:
-                    pass  # Column already exists.
+                    pass
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_memories_parent ON memories(parent_memory_id)"
+                "CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category)"
             )
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (4)")
+
+        # v5: expand category from 3 values to 8.
+        # Migrate existing data using tag-based heuristics.
+        if current_version < 5:
+            # context → vision (identity/overview tags)
+            conn.execute(
+                "UPDATE memories SET category='vision' "
+                "WHERE category='context' AND id IN "
+                "(SELECT memory_id FROM memory_tags WHERE tag IN ('identity','overview','project'))"
+            )
+            # context → product (decision/scope/design tags)
+            conn.execute(
+                "UPDATE memories SET category='product' "
+                "WHERE category='context' AND id IN "
+                "(SELECT memory_id FROM memory_tags WHERE tag IN ('decision','scope','principles','ux','design'))"
+            )
+            # context remainder → status
+            conn.execute("UPDATE memories SET category='status' WHERE category='context'")
+
+            # code → issue (bug tags)
+            conn.execute(
+                "UPDATE memories SET category='issue' "
+                "WHERE category='code' AND id IN "
+                "(SELECT memory_id FROM memory_tags WHERE tag IN ('bug'))"
+            )
+            # code → implementation (config/milestone/development tags)
+            conn.execute(
+                "UPDATE memories SET category='implementation' "
+                "WHERE category='code' AND id IN "
+                "(SELECT memory_id FROM memory_tags WHERE tag IN ('config','milestone','development'))"
+            )
+            # code → decision (decision tags)
+            conn.execute(
+                "UPDATE memories SET category='decision' "
+                "WHERE category='code' AND id IN "
+                "(SELECT memory_id FROM memory_tags WHERE tag IN ('decision'))"
+            )
+            # code remainder → architecture
+            conn.execute("UPDATE memories SET category='architecture' WHERE category='code'")
+
+            # reference → implementation (github/sync tags)
+            conn.execute(
+                "UPDATE memories SET category='implementation' "
+                "WHERE category='reference' AND id IN "
+                "(SELECT memory_id FROM memory_tags WHERE tag IN ('github','sync'))"
+            )
+            # reference remainder → insight
+            conn.execute("UPDATE memories SET category='insight' WHERE category='reference'")
+
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (5)")
 
     # ------------------------------------------------------------------
     # Project operations
@@ -403,7 +453,7 @@ class MuninnStore:
         depth: int = 1,
         source: str = MemorySource.CONVERSATION,
         tags: list[str] | tuple[str, ...] | None = None,
-        parent_memory_id: str | None = None,
+        category: str = "status",
     ) -> Memory:
         """Create a new memory and return it.
 
@@ -415,6 +465,7 @@ class MuninnStore:
         validate_memory_depth(depth)
         validate_memory_source(source)
         validate_memory_content(content)
+        validate_memory_category(category)
 
         memory_id = uuid.uuid4().hex
         now = _now_iso()
@@ -425,10 +476,10 @@ class MuninnStore:
             with conn:
                 conn.execute(
                     """
-                    INSERT INTO memories (id, project_id, content, depth, source, parent_memory_id, created_at, updated_at)
+                    INSERT INTO memories (id, project_id, content, depth, source, category, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (memory_id, project_id, content, depth, source, parent_memory_id, now, now),
+                    (memory_id, project_id, content, depth, source, category, now, now),
                 )
 
                 for tag in tag_list:
@@ -451,8 +502,8 @@ class MuninnStore:
             depth=depth,
             source=source,
             tags=tuple(tag_list),
+            category=category,
             superseded_by=None,
-            parent_memory_id=parent_memory_id,
             created_at=now,
             updated_at=now,
         )
@@ -671,9 +722,9 @@ class MuninnStore:
         content: str | None = None,
         depth: int | None = None,
         tags: list[str] | tuple[str, ...] | None = None,
-        parent_memory_id: str | None = ...,
+        category: str | None = None,
     ) -> "Memory | None":
-        """Update an existing memory's content, depth, and/or tags.
+        """Update an existing memory's content, depth, tags, and/or category.
 
         Accepts full UUIDs or unique prefixes (e.g. first 6-8 chars).
         Only non-None parameters are updated. Returns the updated Memory,
@@ -706,8 +757,9 @@ class MuninnStore:
                     from muninn.models import validate_memory_depth
                     validate_memory_depth(depth)
                     updates["depth"] = depth
-                if parent_memory_id is not ...:
-                    updates["parent_memory_id"] = parent_memory_id
+                if category is not None:
+                    validate_memory_category(category)
+                    updates["category"] = category
 
                 set_clause = ", ".join(f"{col} = ?" for col in updates)
                 values = list(updates.values()) + [memory_id]
@@ -789,10 +841,11 @@ class MuninnStore:
             conn.close()
         return _row_to_memory(row, tags=tags)
 
-    def get_memory_graph(self, project_id: str) -> list[Memory]:
-        """Return all active memories for a project (no char budget).
+    def get_memory_tree(self, project_id: str) -> dict:
+        """Return a virtual tree structure for the tree view.
 
-        Used by the graph view which needs every node regardless of size.
+        Groups memories by depth and category without requiring
+        explicit parent-child relationships.
         """
         conn = self._get_connection()
         try:
@@ -808,10 +861,20 @@ class MuninnStore:
             tags_map = _fetch_tags_for_memories(conn, memory_ids)
         finally:
             conn.close()
-        return [
+
+        memories = [
             _row_to_memory(r, tags=tags_map.get(r["id"], ()))
             for r in rows
         ]
+
+        roots = [m for m in memories if m.depth == 0]
+        groups: dict[str, list] = {}
+        for m in memories:
+            if m.depth == 0:
+                continue
+            groups.setdefault(m.category, []).append(m)
+
+        return {"roots": roots, "groups": groups}
 
     def get_depth_distribution(self, project_id: str) -> dict[int, int]:
         """Return depth → count mapping for active memories in a project."""
