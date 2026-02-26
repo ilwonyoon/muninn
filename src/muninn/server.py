@@ -62,6 +62,7 @@ _INSTRUCTIONS = (
     "\n"
     "## Category selection\n"
     "Pick the category that best describes what the memory IS, not what it's about:\n"
+    "  brainstorm     — 'What if...?' Raw ideation, voice chat dumps, early-stage exploration. Set resolved=true when ideas graduate.\n"
     "  vision         — 'Why does this exist?' Project motivation, target users, market.\n"
     "  product        — 'What are we building?' Scope, UX, feature tradeoffs.\n"
     "  insight        — 'What did we learn?' User observations, usage patterns.\n"

@@ -23,7 +23,7 @@ export interface Memory {
   source: "conversation" | "github" | "manual";
   tags: string[];
   superseded_by: string | null;
-  category: "vision" | "product" | "insight" | "status" | "architecture" | "decision" | "implementation" | "issue";
+  category: "brainstorm" | "vision" | "product" | "insight" | "status" | "architecture" | "decision" | "implementation" | "issue";
   parent_memory_id: string | null;
   title: string | null;
   resolved: boolean;
