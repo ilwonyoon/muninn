@@ -11,7 +11,7 @@ from muninn.models import Memory, Project, ProjectStatus
 # Helpers
 # ---------------------------------------------------------------------------
 
-_DEPTH_LABELS = {0: "summary", 1: "context", 2: "detailed", 3: "full"}
+_DEPTH_LABELS = {0: "L0:identity", 1: "L1:index", 2: "L2:working", 3: "L3:archive"}
 
 _STATUS_EMOJI = {
     ProjectStatus.ACTIVE: "🟢",
@@ -90,7 +90,7 @@ def format_recall(
     projects_memories: dict[str, tuple[Project, list[Memory]]],
     stats: dict[str, int] | None = None,
 ) -> str:
-    """Format recall output for LLM consumption.
+    """Format recall output for LLM consumption with parent-child hierarchy.
 
     Args:
         projects_memories: Mapping of project_id to (Project, list[Memory]).
@@ -117,20 +117,32 @@ def format_recall(
 
         lines.append("")
 
-        # Group by depth, newest first within each group.
-        depth_groups: dict[int, list[Memory]] = {}
-        for mem in memories:
-            depth_groups.setdefault(mem.depth, []).append(mem)
+        # Build id → memory lookup and parent → children map.
+        mem_by_id: dict[str, Memory] = {m.id: m for m in memories}
+        children_map: dict[str, list[Memory]] = {}
+        roots: list[Memory] = []
+        for mem in sorted(memories, key=lambda m: (m.depth, m.updated_at), reverse=False):
+            pid = mem.parent_memory_id
+            if pid is None or pid not in mem_by_id:
+                roots.append(mem)
+            else:
+                children_map.setdefault(pid, []).append(mem)
 
-        for depth in sorted(depth_groups):
-            group = sorted(depth_groups[depth], key=lambda m: m.updated_at, reverse=True)
-            for mem in group:
-                label = _DEPTH_LABELS.get(mem.depth, str(mem.depth))
-                date = _date_label(mem.updated_at)
-                short_id = mem.id[:8] if len(mem.id) >= 8 else mem.id
-                lines.append(f"- [{label}] ({short_id}) {mem.content} ({date})")
-                if mem.tags:
-                    lines.append(f"  tags: {', '.join(mem.tags)}")
+        def _render_mem(mem: Memory, indent: int) -> None:
+            label = _DEPTH_LABELS.get(mem.depth, str(mem.depth))
+            date = _date_label(mem.updated_at)
+            short_id = mem.id[:8] if len(mem.id) >= 8 else mem.id
+            prefix = "  " * indent + "- "
+            title_part = f" [{mem.title}]" if mem.title else ""
+            resolved_mark = " [resolved]" if mem.resolved else ""
+            lines.append(f"{prefix}[{label}]{title_part}{resolved_mark} ({short_id}) {mem.content} ({date})")
+            if mem.tags:
+                lines.append("  " * indent + f"  tags: {', '.join(mem.tags)}")
+            for child in sorted(children_map.get(mem.id, []), key=lambda m: m.updated_at, reverse=True):
+                _render_mem(child, indent + 1)
+
+        for root in sorted(roots, key=lambda m: (m.depth, m.updated_at), reverse=False):
+            _render_mem(root, 0)
 
         sections.append("\n".join(lines))
 
@@ -216,7 +228,9 @@ def format_search_results(
         label = _DEPTH_LABELS.get(mem.depth, str(mem.depth))
         date = _date_label(mem.updated_at)
         short_id = mem.id[:8] if len(mem.id) >= 8 else mem.id
-        lines.append(f"[{mem.project_id}] ({short_id}) {mem.content} ({label}, {date})")
+        title_part = f" [{mem.title}]" if mem.title else ""
+        resolved_mark = " [resolved]" if mem.resolved else ""
+        lines.append(f"[{mem.project_id}] ({short_id}){title_part}{resolved_mark} {mem.content} ({label}, {date})")
         if mem.tags:
             lines.append(f"  tags: {', '.join(mem.tags)}")
 
@@ -241,8 +255,11 @@ def format_save_confirmation(memory: Memory, project: Project) -> str:
     tags_display = ", ".join(memory.tags) if memory.tags else "none"
     short_id = memory.id[:8] if len(memory.id) >= 8 else memory.id
 
+    title_part = f" | Title: {memory.title}" if memory.title else ""
+    parent_part = f" | Parent: {memory.parent_memory_id[:8]}" if memory.parent_memory_id else ""
+
     line1 = f"Saved to {project.id} (memory: {short_id})"
-    line2 = f"Depth: {label} | Tags: {tags_display} | Project memories: {project.memory_count}"
+    line2 = f"Depth: {label}{title_part}{parent_part} | Tags: {tags_display} | Project memories: {project.memory_count}"
 
     return f"✅ {line1}\n{line2}"
 

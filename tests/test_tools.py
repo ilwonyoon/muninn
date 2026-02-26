@@ -88,24 +88,24 @@ class TestMuninnSave:
         assert "backend" in result or "auth" in result
 
     def test_save_depth_0_shows_summary_label(self, initialized_store):
-        """Save with depth=0 shows 'summary' label in confirmation."""
+        """Save with depth=0 shows 'L0:identity' label in confirmation."""
         result = muninn_save(project="dp0", content="Summary level", depth=0)
-        assert "summary" in result
+        assert "L0:identity" in result
 
     def test_save_depth_1_shows_context_label(self, initialized_store):
-        """Save with depth=1 shows 'context' label in confirmation."""
+        """Save with depth=1 shows 'L1:index' label in confirmation."""
         result = muninn_save(project="dp1", content="Context level", depth=1)
-        assert "context" in result
+        assert "L1:index" in result
 
     def test_save_depth_2_shows_detailed_label(self, initialized_store):
-        """Save with depth=2 shows 'detailed' label in confirmation."""
+        """Save with depth=2 shows 'L2:working' label in confirmation."""
         result = muninn_save(project="dp2", content="Detailed level", depth=2)
-        assert "detailed" in result
+        assert "L2:working" in result
 
     def test_save_depth_3_shows_full_label(self, initialized_store):
-        """Save with depth=3 shows 'full' label in confirmation."""
+        """Save with depth=3 shows 'L3:archive' label in confirmation."""
         result = muninn_save(project="dp3", content="Full level", depth=3)
-        assert "full" in result
+        assert "L3:archive" in result
 
 
 # ---------------------------------------------------------------------------

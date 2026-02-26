@@ -113,6 +113,15 @@ def validate_memory_content(content: str) -> None:
         raise ValueError("Memory content must not be empty or whitespace-only.")
 
 
+def validate_parent_depth(parent_depth: int, child_depth: int) -> None:
+    """Raise ValueError if parent depth is not strictly less than child depth."""
+    if parent_depth >= child_depth:
+        raise ValueError(
+            f"Parent depth ({parent_depth}) must be strictly less than "
+            f"child depth ({child_depth})."
+        )
+
+
 def validate_tags(tags: list[str] | tuple[str, ...] | None) -> list[str]:
     """Normalise and validate tags, returning a clean list.
 
@@ -165,11 +174,14 @@ class Memory:
     content: str
     created_at: str
     updated_at: str
-    depth: int = 1
+    depth: int = 2
     source: str = MemorySource.CONVERSATION
     tags: tuple[str, ...] = field(default_factory=tuple)
     category: str = MemoryCategory.STATUS
     superseded_by: str | None = None
+    parent_memory_id: str | None = None
+    title: str | None = None
+    resolved: bool = False
 
     def __post_init__(self) -> None:
         validate_memory_depth(self.depth)

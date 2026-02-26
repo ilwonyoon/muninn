@@ -24,6 +24,9 @@ export interface Memory {
   tags: string[];
   superseded_by: string | null;
   category: "vision" | "product" | "insight" | "status" | "architecture" | "decision" | "implementation" | "issue";
+  parent_memory_id: string | null;
+  title: string | null;
+  resolved: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -67,7 +70,7 @@ export interface TreeEdge {
 
 export interface MemoryTreeResponse {
   roots: Memory[];
-  groups: Record<string, Memory[]>;
+  children: Record<string, Memory[]>;
   edges: TreeEdge[];
 }
 

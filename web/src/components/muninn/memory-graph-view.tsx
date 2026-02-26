@@ -16,13 +16,11 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { Memory, MemoryTreeResponse } from "@/lib/types";
-import { MemoryGraphNode, CategoryGroupNode } from "@/components/muninn/memory-graph-node";
+import { MemoryGraphNode } from "@/components/muninn/memory-graph-node";
 import { useTreeLayout } from "@/components/muninn/use-graph-layout";
-import { CATEGORY_COLORS } from "@/lib/constants";
 
 const nodeTypes = {
   memoryNode: MemoryGraphNode,
-  categoryGroupNode: CategoryGroupNode,
 };
 
 interface MemoryGraphViewProps {
@@ -43,7 +41,6 @@ function MemoryGraphViewInner({
   const { fitView } = useReactFlow();
   const fittedRef = useRef(false);
   const [selectedMemoryNode, setSelectedMemoryNode] = useState<Node | null>(null);
-  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
 
   // Undo/redo for node positions
   type PositionSnapshot = Record<string, { x: number; y: number }>;
@@ -61,7 +58,6 @@ function MemoryGraphViewInner({
 
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {
-      // Detect drag start → capture snapshot for undo
       const dragStart = changes.some(
         (c) => c.type === "position" && c.dragging === true
       );
@@ -107,60 +103,19 @@ function MemoryGraphViewInner({
     applyPositions(next);
   }, [capturePositions, applyPositions]);
 
-  const toggleCategory = useCallback((category: string) => {
-    setCollapsedCategories((prev) => {
-      const next = new Set(prev);
-      if (next.has(category)) {
-        next.delete(category);
-      } else {
-        next.add(category);
-      }
-      return next;
-    });
-  }, []);
-
-  // Sync when treeData changes or collapsed state changes
+  // Sync nodes/edges when layout changes
   useEffect(() => {
-    // Inject collapsed state into category group nodes
-    const processed = initialNodes.map((n) => {
-      if (n.type === "categoryGroupNode") {
-        const cat = (n.data as Record<string, unknown>).category as string;
-        return { ...n, data: { ...n.data, collapsed: collapsedCategories.has(cat) } };
-      }
-      return n;
-    });
-
-    // Filter out memory nodes under collapsed categories
-    const visible = processed.filter((n) => {
-      if (n.type !== "memoryNode") return true;
-      const parentEdge = initialEdges.find(
-        (e) => e.target === n.id && e.source.startsWith("group:")
-      );
-      if (!parentEdge) return true; // root node
-      const cat = parentEdge.source.replace("group:", "");
-      return !collapsedCategories.has(cat);
-    });
-
-    const visibleIds = new Set(visible.map((n) => n.id));
-    const filteredEdges = initialEdges.filter(
-      (e) => visibleIds.has(e.source) && visibleIds.has(e.target)
-    );
-
-    setNodes(visible);
-    setEdges(filteredEdges);
-  }, [initialNodes, initialEdges, collapsedCategories, setNodes, setEdges]);
+    setNodes(initialNodes);
+    setEdges(initialEdges);
+  }, [initialNodes, initialEdges, setNodes, setEdges]);
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
       const data = node.data as Record<string, unknown>;
-      if (data.isGroup) {
-        toggleCategory(data.category as string);
-        return;
-      }
-      const mem = data as unknown as Memory;
+      const mem = data.memory as Memory;
       onNodeSelect(mem.short_id);
     },
-    [onNodeSelect, toggleCategory]
+    [onNodeSelect]
   );
 
   const handleSelectionChange = useCallback(
@@ -177,31 +132,28 @@ function MemoryGraphViewInner({
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 
-      // Undo: Ctrl+Z (or Cmd+Z on Mac)
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === "z") {
         e.preventDefault();
         undo();
         return;
       }
-      // Redo: Ctrl+Shift+Z (or Cmd+Shift+Z on Mac)
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "z") {
         e.preventDefault();
         redo();
         return;
       }
 
-      // DEL / Backspace → delete selected memory node
       if (e.key !== "Delete" && e.key !== "Backspace") return;
       if (!selectedMemoryNode || selectedMemoryNode.type !== "memoryNode") return;
       e.preventDefault();
-      const mem = selectedMemoryNode.data as unknown as Memory;
+      const mem = (selectedMemoryNode.data as Record<string, unknown>).memory as Memory;
       onDeleteRequest(mem);
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [selectedMemoryNode, onDeleteRequest, undo, redo]);
 
-  // Fit view on first render
+  // Fit view on first render only
   useEffect(() => {
     if (fittedRef.current || nodes.length === 0) return;
     const timer = setTimeout(() => {
@@ -237,10 +189,8 @@ function MemoryGraphViewInner({
       <MiniMap
         nodeColor={(node) => {
           const data = node.data as Record<string, unknown>;
-          if (data.isGroup) {
-            return CATEGORY_COLORS[data.category as string] ?? "#666666";
-          }
-          const depth = (data as unknown as Memory)?.depth ?? 1;
+          const mem = data.memory as Memory | undefined;
+          const depth = mem?.depth ?? 1;
           const depthColors: Record<number, string> = {
             0: "#10b981",
             1: "#3b82f6",

@@ -79,11 +79,29 @@ def _log_usage(
 def muninn_save(
     project: str,
     content: str,
-    depth: int = 1,
+    depth: int = 2,
     tags: tuple[str, ...] | list[str] | None = None,
     category: str = "status",
+    parent_memory_id: str | None = None,
+    title: str | None = None,
 ) -> str:
     """Save a distilled memory to a project. Auto-creates the project if it does not exist.
+
+    HIERARCHY — memories are organized in a parent-child tree:
+      L0 (depth=0) — Project identity. One per project. Create FIRST.
+                     Example: "Muninn: Python MCP memory server. SQLite + FTS5."
+      L1 (depth=1) — Topic index entries. One per major topic area.
+                     Example: "Auth: Bearer token via MUNINN_API_KEY."
+      L2 (depth=2) — Working memories under a topic. DEFAULT depth.
+                     Example: "Decided to remove OAuth — local-only scope."
+      L3 (depth=3) — Archive / raw data under a working memory.
+                     Example: Raw benchmark results, old schema versions.
+
+    SAVE PATTERN:
+      1. Check existing L1 index: muninn_recall(project, depth=1)
+      2. If topic L1 exists, save L2 under it: parent_memory_id=<l1_id>
+      3. If topic L1 is new, create it first, then save L2 under it.
+      4. Always set title= for skimmability (max 60 chars, plain text).
 
     CATEGORY — classifies the type of content being stored:
       ## Product categories
@@ -97,25 +115,6 @@ def muninn_save(
       category="implementation" — Code-level facts: config, commands, file paths, API contracts
       category="issue"          — Bugs, errors, blockers, unresolved hurdles
 
-    CONTENT QUALITY — never save raw conversation. Always distill:
-      Bad:  "User said they want SQLite and I suggested WAL mode and they agreed"
-      Good: "Storage: SQLite with WAL mode. Chosen for zero-dependency local deploy."
-
-    DEPTH — pick based on when this memory needs to surface:
-      depth=0  "What is this?"  — 2-3 sentence project identity. Create FIRST for any new
-                                  project. Max 300 chars. Always loaded on every recall.
-                                  Example: "Muninn: Python MCP memory server. SQLite + FTS5.
-                                  5 tools: save/recall/search/status/manage."
-      depth=1  "To continue"    — What's needed to resume next session: current direction,
-                                  key decisions, open questions. 200-400 chars each.
-                                  One topic per memory. Use this depth by DEFAULT.
-                                  Example: "Auth: OAuth 2.0 via MUNINN_OWNER_PASSWORD.
-                                  Bearer token fallback via MUNINN_API_KEY. Mobile untested."
-      depth=2  "To go deeper"   — Full analysis, research findings, detailed implementation
-                                  plans. Loaded only when user asks to dive into specifics.
-                                  Example: complete schema design, benchmark data, RFC notes.
-      depth=3  "Just in case"   — Raw logs, old versions, archived data. Rarely needed.
-
     TAGS — always set 1-3 tags per memory to enable later filtering:
       Decisions:    ['decision', 'architecture'] or ['decision', 'api']
       Bugs/issues:  ['bug', 'auth'] or ['bug', 'performance']
@@ -126,7 +125,7 @@ def muninn_save(
 
     RULES:
       - One topic per memory. Split unrelated facts into separate muninn_save calls.
-      - Depth 0-1 must be skimmable in under 5 seconds — cut anything redundant.
+      - L0-L1 must be skimmable in under 5 seconds — cut anything redundant.
       - Prefer concrete over vague: 'Using hatchling' beats 'build system chosen'.
       - Update stale memories via muninn_manage update_memory instead of adding duplicates.
     """
@@ -145,6 +144,8 @@ def muninn_save(
             depth=depth,
             tags=tags,
             category=category,
+            parent_memory_id=parent_memory_id,
+            title=title,
         )
 
         # Re-fetch project so memory_count is up-to-date.
@@ -160,9 +161,10 @@ def muninn_save(
 
 def muninn_recall(
     project: str | None = None,
-    depth: int = 1,
+    depth: int = 2,
     max_chars: int = 8000,
     tags: list[str] | None = None,
+    parent_id: str | None = None,
 ) -> str:
     """Load project context from Muninn memory.
 
@@ -172,14 +174,20 @@ def muninn_recall(
       - Switching focus: call when the conversation shifts to a different project.
       - After search: call after muninn_search to load full context for a found project.
 
+    DRILL-DOWN PATTERN:
+      1. Start with depth=1 to get the topic index (L1 entries).
+      2. Find the relevant L1 topic memory id.
+      3. Call again with parent_id=<l1_id>, depth=2 to load working memories under it.
+      4. Use depth=3 only for archives.
+
     DEPTH — controls how much to load (cumulative, each level includes all above):
-      depth=0  — "What is this?" only. Quick project identity, always 1-2 sentences.
+      depth=0  — L0 identity only. Quick project identity, always 1-2 sentences.
                  Use when you just need to know if a project exists.
-      depth=1  — Above + "To continue" memories. Resumes work from last session.
-                 DEFAULT. Use this at session start for any active project.
-      depth=2  — Above + "To go deeper" details. Full analysis and research.
+      depth=1  — L0 + L1 topic index. Resumes work from last session.
+                 Use this at session start for any active project.
+      depth=2  — Above + L2 working memories. Full current context. DEFAULT.
                  Use when the user explicitly asks to dive into a specific area.
-      depth=3  — Everything including archives. Rarely needed.
+      depth=3  — Everything including L3 archives. Rarely needed.
 
     If no project is specified, loads all active projects (useful at session start
     when you don't yet know which project the user will work on).
@@ -197,6 +205,7 @@ def muninn_recall(
             depth=depth,
             max_chars=max_chars,
             tags=tags,
+            parent_id=parent_id,
         )
 
         # Build the dict[str, tuple[Project, list[Memory]]] that
@@ -382,8 +391,16 @@ def muninn_manage(
                     return f"Error: depth must be an integer, got '{value}'."
             elif field == "tags" and value is not None:
                 update_kwargs["tags"] = [t.strip() for t in value.split(",") if t.strip()]
+            elif field == "category" and value is not None:
+                update_kwargs["category"] = value
+            elif field == "parent_memory_id":
+                update_kwargs["parent_memory_id"] = value  # None clears the parent
+            elif field == "title":
+                update_kwargs["title"] = value  # None clears the title
+            elif field == "resolved" and value is not None:
+                update_kwargs["resolved"] = value.lower() in ("true", "1", "yes")
             elif field is not None:
-                return f"Error: invalid field '{field}' for update_memory. Must be one of: content, depth, tags."
+                return f"Error: invalid field '{field}' for update_memory. Must be one of: content, depth, tags, category, parent_memory_id, title, resolved."
             elif value is not None:
                 # No field specified but value given — default to content update
                 update_kwargs["content"] = value
