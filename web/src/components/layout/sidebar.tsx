@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
-import { Brain, LayoutDashboard, Search, Settings } from "lucide-react";
+import { Brain, FileText, LayoutDashboard, Search, Settings } from "lucide-react";
 import { useProjectStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { StatusDot } from "@/components/muninn/status-dot";
@@ -107,8 +107,25 @@ export function Sidebar() {
       {/* Footer */}
       <div className="border-t border-border px-2 py-2">
         <Link
+          href="/instructions"
+          className={cn(
+            "flex items-center gap-2 rounded-md px-2 py-1.5 text-xs",
+            pathname === "/instructions"
+              ? "bg-card-hover text-foreground"
+              : "text-muted hover:text-foreground"
+          )}
+        >
+          <FileText className="h-3.5 w-3.5" />
+          Instructions
+        </Link>
+        <Link
           href="/settings"
-          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted hover:text-foreground"
+          className={cn(
+            "flex items-center gap-2 rounded-md px-2 py-1.5 text-xs",
+            pathname === "/settings"
+              ? "bg-card-hover text-foreground"
+              : "text-muted hover:text-foreground"
+          )}
         >
           <Settings className="h-3.5 w-3.5" />
           Settings

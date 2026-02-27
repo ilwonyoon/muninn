@@ -130,3 +130,16 @@ export function listTags(project?: string): Promise<string[]> {
 export function getStats(): Promise<DashboardStats> {
   return fetchJSON("/stats");
 }
+
+// -- Instructions ------------------------------------------------------------
+
+export function getInstructions(): Promise<{ content: string; path: string }> {
+  return fetchJSON("/instructions");
+}
+
+export function updateInstructions(content: string): Promise<{ content: string; path: string }> {
+  return fetchJSON("/instructions", {
+    method: "PUT",
+    body: JSON.stringify({ content }),
+  });
+}

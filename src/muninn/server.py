@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -37,34 +38,68 @@ from muninn.tools import (
 )
 
 _INSTRUCTIONS = (
-    "Muninn is persistent project memory for AI assistants.\n"
+    "Muninn is a personal memory bridge across AI tools.\n"
+    "The user works on multiple projects (apps, tools, ideas) and switches\n"
+    "between Claude Code, Claude Desktop, ChatGPT, and Codex. Muninn keeps\n"
+    "context alive across all of them.\n"
     "\n"
-    "## When to use\n"
-    "- SESSION START: Call muninn_recall when the user mentions a project.\n"
-    "- AFTER SIGNIFICANT WORK: Save key decisions, conclusions, and state.\n"
-    "- Never save raw conversation. Distill into facts and decisions.\n"
+    "## How to use\n"
+    "1. When the user mentions a project by name, call muninn_recall first.\n"
+    "2. When important conclusions emerge, save them immediately.\n"
+    "3. At the end of a meaningful session, update the project summary.\n"
     "\n"
-    "## Save tips\n"
+    "## What to save\n"
+    "Save the user's THINKING, not the technical output:\n"
+    "- Decisions made and why: '계층 구조 제거. 단순할수록 좋다는 결론.'\n"
+    "- Direction changes: '처음엔 React Native였는데 Swift로 전환. 퍼포먼스 이유.'\n"
+    "- Current status: '로그인까지 구현됨. 다음은 결제 연동.'\n"
+    "- Open questions: 'DB를 Supabase로 갈지 SQLite로 갈지 미정.'\n"
+    "- Feature descriptions (user perspective): '사용자가 포커스 시간을 설정하면 앱이 방해 알림을 차단해줌'\n"
+    "\n"
+    "## What NOT to save\n"
+    "- Code changes, function names, test results (git handles this)\n"
+    "- Raw conversation logs\n"
+    "- Implementation details like 'added WAL mode to SQLite'\n"
+    "\n"
+    "## Save format\n"
     "- One topic per memory. Split unrelated facts into separate saves.\n"
-    "- Use 1-3 tags per memory for filtering: ['decision', 'auth'], ['bug', 'api'].\n"
+    "- Use 1-3 tags: ['decision', 'direction'], ['feature', 'payment'], ['idea'].\n"
     "- Update stale memories with muninn_manage update_memory, don't duplicate.\n"
     "\n"
     "## Project summary\n"
-    "- After each session, update the project summary via:\n"
+    "After each session, update summary to describe what this project IS\n"
+    "from the user's perspective (not how it's built):\n"
     '  muninn_manage(action="update_project", project="xxx", field="summary", value="...")\n'
-    "- Write from USER/PRODUCT perspective, not engineer perspective.\n"
-    "- This is NOT technical documentation. Record thoughts, decisions, and direction.\n"
-    '  Good: "복잡한 분류 체계 제거 결정. 단순할수록 좋다는 결론."\n'
-    '  Bad: "SQLite WAL + FTS5 with bearer token middleware 구현 완료"\n'
-    "- Record: what was decided, why, what changed in thinking, what's next.\n"
-    "- Do NOT record: what code was written, what tests pass, what functions were added.\n"
+    "Good: '포커스 시간 관리 앱. 집중 모드에서 알림 차단 + 통계 대시보드.'\n"
+    "Bad: 'Swift + CoreData + CloudKit으로 구현된 iOS 앱'\n"
     "\n"
-    "## Project status\n"
-    "- active: 진행 중인 프로젝트\n"
-    "- paused: 일시 중단\n"
-    "- idea: 관심사, 탐구 중\n"
-    "- archived: 완료된 과거 프로젝트\n"
+    "## Project types the user works on\n"
+    "- Active side projects (apps, developer tools)\n"
+    "- Past work / portfolio projects\n"
+    "- Personal interests and ideas being explored\n"
+    "\n"
+    "## Project status values\n"
+    "- active: currently working on\n"
+    "- paused: temporarily on hold\n"
+    "- idea: exploring, not started yet\n"
+    "- archived: completed or past project\n"
 )
+
+
+def _instructions_path() -> Path:
+    """Return the path to the user-editable instructions file."""
+    return Path(MuninnStore.default_db_path()).parent / "instructions.md"
+
+
+def _load_instructions() -> str:
+    """Load instructions from file, writing the default if the file doesn't exist."""
+    path = _instructions_path()
+    if path.exists():
+        return path.read_text(encoding="utf-8")
+    # File doesn't exist — write the default so the user has a starting point.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_INSTRUCTIONS, encoding="utf-8")
+    return _INSTRUCTIONS
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -159,7 +194,7 @@ def _create_mcp(
 
     mcp = FastMCP(
         "muninn",
-        instructions=_INSTRUCTIONS,
+        instructions=_load_instructions(),
         host=host,
         port=port,
         streamable_http_path="/",

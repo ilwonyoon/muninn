@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from starlette.requests import Request
@@ -280,6 +281,41 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
         return JSONResponse([_memory_to_dict(m) for m in chain])
 
     # ------------------------------------------------------------------
+    # Instructions
+    # ------------------------------------------------------------------
+
+    def _get_instructions_path() -> Path:
+        from muninn.store import MuninnStore
+        return Path(MuninnStore.default_db_path()).parent / "instructions.md"
+
+    async def get_instructions(request: Request) -> JSONResponse:
+        path = _get_instructions_path()
+        if path.exists():
+            content = path.read_text(encoding="utf-8")
+        else:
+            content = ""
+        return JSONResponse({"instructions": content, "path": str(path)})
+
+    async def put_instructions(request: Request) -> JSONResponse:
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            return JSONResponse(
+                {"error": "Invalid JSON body", "code": "BAD_REQUEST"},
+                status_code=400,
+            )
+        instructions = body.get("instructions")
+        if instructions is None:
+            return JSONResponse(
+                {"error": "'instructions' is required", "code": "BAD_REQUEST"},
+                status_code=400,
+            )
+        path = _get_instructions_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(instructions, encoding="utf-8")
+        return JSONResponse({"ok": True})
+
+    # ------------------------------------------------------------------
     # Route table
     # ------------------------------------------------------------------
 
@@ -297,4 +333,6 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
         Route("/search", search_memories, methods=["GET"]),
         Route("/tags", list_tags, methods=["GET"]),
         Route("/stats", get_stats, methods=["GET"]),
+        Route("/instructions", get_instructions, methods=["GET"]),
+        Route("/instructions", put_instructions, methods=["PUT"]),
     ]
