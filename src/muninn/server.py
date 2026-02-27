@@ -23,6 +23,7 @@ import os
 import sys
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from muninn.store import MuninnStore
 from muninn.tools import (
@@ -140,12 +141,29 @@ def _create_mcp(
             required_scopes=["muninn"],
         )
 
+    # When behind a reverse proxy (Cloudflare Tunnel), allow the public
+    # hostname in addition to localhost so DNS-rebinding protection passes.
+    transport_security = None
+    if public_url:
+        from urllib.parse import urlparse
+
+        public_host = urlparse(public_url).hostname or ""
+        transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=[
+                f"127.0.0.1:{port}",
+                f"localhost:{port}",
+                public_host,
+            ],
+        )
+
     mcp = FastMCP(
         "muninn",
         instructions=_INSTRUCTIONS,
         host=host,
         port=port,
         streamable_http_path="/",
+        transport_security=transport_security,
         **oauth_kwargs,
     )
     mcp.tool()(muninn_save)
