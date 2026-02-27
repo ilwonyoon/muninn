@@ -10,6 +10,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+
 import {
   getMemory,
   getSupersedeChain,
@@ -18,7 +19,6 @@ import {
 } from "@/lib/api";
 import type { Memory } from "@/lib/types";
 import { relativeTime } from "@/lib/utils";
-import { DepthBadge } from "@/components/muninn/depth-badge";
 import { TagPill } from "@/components/muninn/tag-pill";
 import { MarkdownContent } from "@/components/muninn/markdown-content";
 import { SupersedeChain } from "@/components/muninn/supersede-chain";
@@ -42,7 +42,6 @@ export default function MemoryDetailPage() {
   // Edit state
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
-  const [editDepth, setEditDepth] = useState(1);
   const [editTags, setEditTags] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -68,7 +67,6 @@ export default function MemoryDetailPage() {
   const startEdit = () => {
     if (!memory) return;
     setEditContent(memory.content);
-    setEditDepth(memory.depth);
     setEditTags(memory.tags.join(", "));
     setEditing(true);
   };
@@ -87,7 +85,6 @@ export default function MemoryDetailPage() {
         .filter(Boolean);
       const updated = await updateMemory(memory.id, {
         content: editContent,
-        depth: editDepth,
         tags,
       });
       setMemory(updated);
@@ -177,32 +174,6 @@ export default function MemoryDetailPage() {
         </div>
       </div>
 
-      {/* Title */}
-      {memory.title && (
-        <h1 className="mt-4 text-base font-semibold text-foreground">
-          {memory.title}
-        </h1>
-      )}
-
-      {/* Resolved badge + parent link */}
-      {(memory.resolved || memory.parent_memory_id) && (
-        <div className="mt-2 flex items-center gap-2">
-          {memory.resolved && (
-            <span className="inline-flex items-center gap-1 rounded border border-status-active/30 bg-status-active/10 px-2 py-0.5 text-[10px] font-medium text-status-active">
-              <Check className="h-3 w-3" /> resolved
-            </span>
-          )}
-          {memory.parent_memory_id && (
-            <Link
-              href={`/projects/${projectId}/${memory.parent_memory_id}`}
-              className="text-xs text-muted hover:text-foreground"
-            >
-              Parent: <span className="font-mono">{memory.parent_memory_id.slice(0, 8)}</span>
-            </Link>
-          )}
-        </div>
-      )}
-
       {/* Metadata */}
       <div className="mt-4 grid grid-cols-2 gap-y-2 text-xs">
         <div>
@@ -229,28 +200,14 @@ export default function MemoryDetailPage() {
         </div>
       </div>
 
-      {/* Depth + tags */}
-      <div className="mt-4 flex items-center gap-3">
-        {editing ? (
-          <select
-            value={editDepth}
-            onChange={(e) => setEditDepth(Number(e.target.value))}
-            className="rounded border border-border bg-card px-2 py-1 font-mono text-[10px] text-foreground"
-          >
-            <option value={0}>0 - summary</option>
-            <option value={1}>1 - context</option>
-            <option value={2}>2 - detailed</option>
-            <option value={3}>3 - full</option>
-          </select>
-        ) : (
-          <DepthBadge depth={memory.depth} />
-        )}
+      {/* Tags */}
+      <div className="mt-4">
         {editing ? (
           <input
             value={editTags}
             onChange={(e) => setEditTags(e.target.value)}
             placeholder="tag1, tag2, ..."
-            className="flex-1 rounded border border-border bg-card px-2 py-1 font-mono text-[10px] text-foreground placeholder:text-muted"
+            className="w-full rounded border border-border bg-card px-2 py-1 font-mono text-[10px] text-foreground placeholder:text-muted"
           />
         ) : (
           <div className="flex flex-wrap gap-1">

@@ -33,8 +33,6 @@ def _memory_to_dict(memory: object) -> dict:
     d = asdict(memory)  # type: ignore[arg-type]
     d["tags"] = list(d["tags"])
     d["short_id"] = d["id"][:8]
-    depth_labels = {0: "L0:identity", 1: "L1:index", 2: "L2:working", 3: "L3:archive"}
-    d["depth_label"] = depth_labels.get(d["depth"], str(d["depth"]))
     return d
 
 
@@ -64,7 +62,6 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
                 status_code=404,
             )
         data = _project_to_dict(project)
-        data["depth_distribution"] = store.get_depth_distribution(project_id)
         return JSONResponse(data)
 
     async def create_project(request: Request) -> JSONResponse:
@@ -133,14 +130,12 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
                 {"error": f"Project '{project_id}' not found", "code": "NOT_FOUND"},
                 status_code=404,
             )
-        depth = _safe_int(request.query_params.get("depth"), default=3, lo=0, hi=3)
         max_chars = _safe_int(request.query_params.get("max_chars"), default=50000, lo=100, hi=500000)
         tags_param = request.query_params.get("tags")
         tags = [t.strip() for t in tags_param.split(",") if t.strip()] if tags_param else None
 
         memories_by_project, stats = store.recall(
             project_id=project_id,
-            depth=depth,
             max_chars=max_chars,
             tags=tags,
         )
@@ -181,21 +176,12 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
                 {"error": f"Project '{project_id}' not found", "code": "NOT_FOUND"},
                 status_code=404,
             )
-        raw_depth = body.get("depth", 2)
-        try:
-            depth = max(0, min(3, int(raw_depth)))
-        except (ValueError, TypeError):
-            depth = 2
         try:
             memory = store.save_memory(
                 project_id=project_id,
                 content=content,
-                depth=depth,
                 source=body.get("source", "manual"),
                 tags=body.get("tags"),
-                category=body.get("category", "status"),
-                parent_memory_id=body.get("parent_memory_id"),
-                title=body.get("title"),
             )
         except ValueError as exc:
             return JSONResponse(
@@ -213,28 +199,11 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
                 {"error": "Invalid JSON body", "code": "BAD_REQUEST"},
                 status_code=400,
             )
-        from muninn.store import _UNSET
         kwargs = {}
         if "content" in body:
             kwargs["content"] = body["content"]
-        if "depth" in body:
-            try:
-                kwargs["depth"] = max(0, min(3, int(body["depth"])))
-            except (ValueError, TypeError):
-                return JSONResponse(
-                    {"error": "depth must be an integer 0-3", "code": "BAD_REQUEST"},
-                    status_code=400,
-                )
         if "tags" in body:
             kwargs["tags"] = body["tags"]
-        if "category" in body:
-            kwargs["category"] = body["category"]
-        if "parent_memory_id" in body:
-            kwargs["parent_memory_id"] = body["parent_memory_id"]
-        if "title" in body:
-            kwargs["title"] = body["title"]
-        if "resolved" in body:
-            kwargs["resolved"] = bool(body["resolved"])
         if not kwargs:
             return JSONResponse(
                 {"error": "No valid fields to update", "code": "BAD_REQUEST"},
@@ -311,49 +280,6 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
         return JSONResponse([_memory_to_dict(m) for m in chain])
 
     # ------------------------------------------------------------------
-    # Tree
-    # ------------------------------------------------------------------
-
-    async def get_memory_tree(request: Request) -> JSONResponse:
-        project_id = request.path_params["project_id"]
-        project = store.get_project(project_id)
-        if project is None:
-            return JSONResponse(
-                {"error": f"Project '{project_id}' not found", "code": "NOT_FOUND"},
-                status_code=404,
-            )
-        tree = store.get_memory_tree(project_id)
-        roots = [_memory_to_dict(m) for m in tree["roots"]]
-        children = {
-            parent_id: [_memory_to_dict(m) for m in mems]
-            for parent_id, mems in tree["children"].items()
-        }
-        edges = tree["edges"]
-        return JSONResponse({"roots": roots, "children": children, "edges": edges})
-
-    async def get_memory_children(request: Request) -> JSONResponse:
-        memory_id = request.path_params["memory_id"]
-        parent_mem = store.get_memory(memory_id)
-        if parent_mem is None:
-            return JSONResponse(
-                {"error": f"Memory '{memory_id}' not found", "code": "NOT_FOUND"},
-                status_code=404,
-            )
-        depth = _safe_int(request.query_params.get("depth"), default=3, lo=0, hi=3)
-        max_chars = _safe_int(request.query_params.get("max_chars"), default=50000, lo=100, hi=500000)
-        memories_by_project, stats = store.recall(
-            project_id=parent_mem.project_id,
-            depth=depth,
-            max_chars=max_chars,
-            parent_id=memory_id,
-        )
-        memories = memories_by_project.get(parent_mem.project_id, [])
-        return JSONResponse({
-            "memories": [_memory_to_dict(m) for m in memories],
-            "stats": stats,
-        })
-
-    # ------------------------------------------------------------------
     # Route table
     # ------------------------------------------------------------------
 
@@ -363,13 +289,11 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
         Route("/projects/{project_id}", get_project, methods=["GET"]),
         Route("/projects/{project_id}", update_project, methods=["PATCH"]),
         Route("/projects/{project_id}/memories", list_memories, methods=["GET"]),
-        Route("/projects/{project_id}/tree", get_memory_tree, methods=["GET"]),
         Route("/memories", create_memory, methods=["POST"]),
         Route("/memories/{memory_id}", get_memory, methods=["GET"]),
         Route("/memories/{memory_id}", update_memory, methods=["PATCH"]),
         Route("/memories/{memory_id}", delete_memory, methods=["DELETE"]),
         Route("/memories/{memory_id}/chain", get_supersede_chain, methods=["GET"]),
-        Route("/memories/{memory_id}/children", get_memory_children, methods=["GET"]),
         Route("/search", search_memories, methods=["GET"]),
         Route("/tags", list_tags, methods=["GET"]),
         Route("/stats", get_stats, methods=["GET"]),

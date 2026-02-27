@@ -1,19 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Plus, List, Network } from "lucide-react";
-import {
-  getProject,
-  listMemories,
-  listTags,
-  updateProject,
-  deleteMemory,
-  getMemoryTree,
-} from "@/lib/api";
-import type { Memory, MemoriesResponse, Project, MemoryTreeResponse } from "@/lib/types";
-import { MemoryGraphView } from "@/components/muninn/memory-graph-view";
+import { ArrowLeft, Plus } from "lucide-react";
+import { updateProject, deleteMemory } from "@/lib/api";
+import type { Memory, Project } from "@/lib/types";
+import { useProjectMemories } from "@/lib/use-project-memories";
 import { cn } from "@/lib/utils";
 import { StatusDot } from "@/components/muninn/status-dot";
 import { MemoryRow } from "@/components/muninn/memory-row";
@@ -30,81 +23,23 @@ import { useAppToast } from "@/lib/toast-context";
 
 const ALL_STATUSES = ["active", "paused", "idea", "archived"] as const;
 
-const DEPTH_LABELS: Record<number, string> = {
-  0: "summary",
-  1: "context",
-  2: "detailed",
-  3: "full",
-};
-
 export default function ProjectDetailPage() {
   const params = useParams<{ id: string }>();
   const { toast } = useAppToast();
   const projectId = params.id;
 
-  const [project, setProject] = useState<Project | null>(null);
-  const [data, setData] = useState<MemoriesResponse | null>(null);
-  const [allTags, setAllTags] = useState<string[]>([]);
-  const [depthFilter, setDepthFilter] = useState<number | null>(null);
-  const [tagFilter, setTagFilter] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { project, allMemories, loading, refetch } =
+    useProjectMemories(projectId);
+
+  const [selectedIdx, setSelectedIdx] = useState(-1);
+  const [panelMemoryId, setPanelMemoryId] = useState<string | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Memory | null>(null);
   const [deleting, setDeleting] = useState(false);
-
-  // Panel + selection state
-  const [selectedIdx, setSelectedIdx] = useState(-1);
-  const [panelMemoryId, setPanelMemoryId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const [viewMode, setViewMode] = useState<"list" | "graph">("graph");
-  const [graphData, setGraphData] = useState<MemoryTreeResponse | null>(null);
-  const [graphLoading, setGraphLoading] = useState(false);
-
-  // Always fetch all memories (depth=3 gets everything)
-  const fetchData = useCallback(() => {
-    if (!projectId) return;
-    setLoading(true);
-    Promise.all([
-      getProject(projectId),
-      listMemories(projectId, { depth: 3 }),
-      listTags(projectId),
-    ])
-      .then(([p, m, t]) => {
-        setProject(p);
-        setData(m);
-        setAllTags(t);
-        setGraphData(null);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [projectId]);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  // Lazy-fetch graph data when switching to graph view
-  useEffect(() => {
-    if (viewMode !== "graph" || !projectId) return;
-    if (graphData) return; // already loaded
-    setGraphLoading(true);
-    getMemoryTree(projectId)
-      .then(setGraphData)
-      .catch(() => {})
-      .finally(() => setGraphLoading(false));
-  }, [viewMode, projectId, graphData]);
-
-  // Client-side filtering: exact depth match + tag
-  const allMemories = data?.memories ?? [];
-  const stats = data?.stats;
-  const dist = project?.depth_distribution ?? {};
-
-  const memories = allMemories.filter((m) => {
-    if (depthFilter !== null && m.depth !== depthFilter) return false;
-    if (tagFilter && !m.tags.includes(tagFilter)) return false;
-    return true;
-  });
+  // Memories sorted by updated_at DESC (already from API)
+  const memories = allMemories;
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -147,8 +82,8 @@ export default function ProjectDetailPage() {
   const handleStatusChange = async (next: Project["status"]) => {
     if (!project || next === project.status) return;
     try {
-      const updated = await updateProject(project.id, { status: next });
-      setProject(updated);
+      await updateProject(project.id, { status: next });
+      refetch();
       toast({ title: `Status: ${next}`, variant: "success" });
     } catch (err) {
       toast({
@@ -169,7 +104,7 @@ export default function ProjectDetailPage() {
       if (panelMemoryId === deleteTarget.short_id) {
         setPanelMemoryId(null);
       }
-      fetchData();
+      refetch();
     } catch (err) {
       toast({
         title: "Failed to delete",
@@ -202,12 +137,8 @@ export default function ProjectDetailPage() {
       {/* Main list pane */}
       <div
         className={cn(
-          "flex-1 overflow-y-auto px-6 py-8",
-          panelMemoryId
-            ? "hidden md:block"
-            : viewMode === "list"
-              ? "mx-auto max-w-4xl"
-              : ""
+          "flex-1 overflow-y-auto px-6 py-8 mx-auto max-w-4xl",
+          panelMemoryId && "hidden md:block"
         )}
       >
         {/* Header */}
@@ -248,225 +179,67 @@ export default function ProjectDetailPage() {
               {project.id}
             </h1>
           </div>
-          <div className="flex items-center gap-1">
-            {/* View toggle */}
-            <div className="flex items-center rounded border border-border">
-              <button
-                type="button"
-                onClick={() => setViewMode("graph")}
-                className={cn(
-                  "rounded-l px-2 py-1 text-xs transition-colors",
-                  viewMode === "graph"
-                    ? "bg-card-hover text-foreground"
-                    : "text-muted hover:text-foreground"
-                )}
-                title="Graph view"
-              >
-                <Network className="h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("list")}
-                className={cn(
-                  "rounded-r px-2 py-1 text-xs transition-colors",
-                  viewMode === "list"
-                    ? "bg-card-hover text-foreground"
-                    : "text-muted hover:text-foreground"
-                )}
-                title="List view"
-              >
-                <List className="h-3.5 w-3.5" />
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={() => setSaveOpen(true)}
-              className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted hover:text-foreground"
-              title="New memory (n)"
-            >
-              <Plus className="h-3 w-3" /> Save
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setSaveOpen(true)}
+            className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted hover:text-foreground"
+            title="New memory (n)"
+          >
+            <Plus className="h-3 w-3" /> Save
+          </button>
         </div>
+
         {project.summary && (
           <p className="mt-1 pl-10 text-xs text-muted">{project.summary}</p>
         )}
-        {project.github_repo && (
-          <p className="mt-0.5 pl-10 font-mono text-[10px] text-muted">
-            {project.github_repo}
-          </p>
-        )}
 
-        {viewMode === "list" ? (
-          <>
-            {/* Depth tabs — exclusive filter */}
-            <div className="mt-6 flex items-center gap-2 overflow-x-auto pl-10">
-              <span className="text-xs text-muted">Depth:</span>
-              <button
-                type="button"
-                onClick={() => setDepthFilter(null)}
-                className={cn(
-                  "rounded border px-2 py-0.5 font-mono text-[10px] transition-colors",
-                  depthFilter === null
-                    ? "border-foreground/20 text-foreground"
-                    : "border-border text-muted hover:text-foreground"
-                )}
-              >
-                All ({allMemories.length})
-              </button>
-              {[0, 1, 2, 3].map((d) => (
-                <button
-                  key={d}
-                  type="button"
-                  onClick={() => setDepthFilter(depthFilter === d ? null : d)}
-                  className={cn(
-                    "rounded border px-2 py-0.5 font-mono text-[10px] transition-colors",
-                    depthFilter === d
-                      ? "border-foreground/20 text-foreground"
-                      : "border-border text-muted hover:text-foreground"
-                  )}
-                >
-                  {d} {DEPTH_LABELS[d]} ({dist[String(d)] ?? 0})
-                </button>
-              ))}
-            </div>
-
-            {/* Tag filter */}
-            {allTags.length > 0 && (
-              <div className="mt-2 flex flex-wrap items-center gap-1 pl-10">
-                <span className="text-xs text-muted">Tags:</span>
-                <button
-                  type="button"
-                  onClick={() => setTagFilter(null)}
-                  className={cn(
-                    "rounded-full px-2 py-0.5 text-[10px]",
-                    tagFilter === null
-                      ? "bg-accent text-white"
-                      : "bg-card-hover text-muted"
-                  )}
-                >
-                  all
-                </button>
-                {allTags.map((tag) => (
-                  <button
-                    key={tag}
-                    type="button"
-                    onClick={() => setTagFilter(tag === tagFilter ? null : tag)}
-                    className={cn(
-                      "rounded-full px-2 py-0.5 font-mono text-[10px]",
-                      tag === tagFilter
-                        ? "bg-accent text-white"
-                        : "bg-card-hover text-muted hover:text-foreground"
-                    )}
-                  >
-                    {tag}
-                  </button>
-                ))}
+        {/* Memory list */}
+        <div className="mt-6 pl-10" ref={listRef}>
+          <div className="divide-y divide-border rounded-lg border border-border">
+            {memories.length === 0 && (
+              <div className="px-4 py-6 text-center text-xs text-muted">
+                No memories yet.
               </div>
             )}
-
-            {/* Memory list */}
-            <div className="mt-4 pl-10" ref={listRef}>
-              <div className="divide-y divide-border rounded-lg border border-border">
-                {memories.length === 0 && (
-                  <div className="px-4 py-6 text-center text-xs text-muted">
-                    {depthFilter !== null
-                      ? `No memories at depth ${depthFilter}.`
-                      : "No memories yet."}
-                  </div>
-                )}
-                {memories.map((mem, idx) => (
-                  <MemoryRow
-                    key={mem.id}
-                    memory={mem}
-                    selected={selectedIdx === idx}
-                    active={panelMemoryId === mem.short_id}
-                    onSelect={() => {
-                      setSelectedIdx(idx);
-                      setPanelMemoryId(mem.short_id);
-                    }}
-                    onEdit={() => {
-                      setPanelMemoryId(mem.short_id);
-                    }}
-                    onDelete={() => setDeleteTarget(mem)}
-                  />
-                ))}
-              </div>
-
-              {/* Budget stat — text only, not a slider */}
-              {stats && (
-                <div className="mt-3 flex items-center gap-3 text-[10px] text-muted">
-                  <span className="font-mono">
-                    {stats.chars_loaded.toLocaleString()} chars loaded
-                  </span>
-                  <span className="text-border">|</span>
-                  <span className="font-mono">
-                    {stats.chars_budget.toLocaleString()} budget
-                  </span>
-                  {stats.memories_dropped > 0 && (
-                    <>
-                      <span className="text-border">|</span>
-                      <span className="font-mono text-status-paused">
-                        {stats.memories_dropped} dropped
-                      </span>
-                    </>
-                  )}
-                </div>
-              )}
-
-              {/* Keyboard hints */}
-              <div className="mt-4 flex items-center gap-3 text-[10px] text-muted">
-                <span>
-                  <kbd className="rounded border border-border px-1 py-0.5 font-mono">
-                    j
-                  </kbd>{" "}
-                  <kbd className="rounded border border-border px-1 py-0.5 font-mono">
-                    k
-                  </kbd>{" "}
-                  navigate
-                </span>
-                <span>
-                  <kbd className="rounded border border-border px-1 py-0.5 font-mono">
-                    Enter
-                  </kbd>{" "}
-                  open
-                </span>
-                <span>
-                  <kbd className="rounded border border-border px-1 py-0.5 font-mono">
-                    n
-                  </kbd>{" "}
-                  new
-                </span>
-                <span>
-                  <kbd className="rounded border border-border px-1 py-0.5 font-mono">
-                    Esc
-                  </kbd>{" "}
-                  close
-                </span>
-              </div>
-            </div>
-          </>
-        ) : (
-          /* Graph view */
-          <div className="mt-6 h-[calc(100vh-140px)]">
-            {graphLoading ? (
-              <div className="flex h-full items-center justify-center text-sm text-muted">
-                Loading graph...
-              </div>
-            ) : graphData ? (
-              <MemoryGraphView
-                treeData={graphData}
-                activeMemoryId={panelMemoryId}
-                onNodeSelect={(shortId) => setPanelMemoryId(shortId)}
-                onDeleteRequest={(mem) => setDeleteTarget(mem)}
+            {memories.map((mem, idx) => (
+              <MemoryRow
+                key={mem.id}
+                memory={mem}
+                selected={selectedIdx === idx}
+                active={panelMemoryId === mem.short_id}
+                onSelect={() => {
+                  setSelectedIdx(idx);
+                  setPanelMemoryId(mem.short_id);
+                }}
+                onEdit={() => {
+                  setPanelMemoryId(mem.short_id);
+                }}
+                onDelete={() => setDeleteTarget(mem)}
               />
-            ) : (
-              <div className="flex h-full items-center justify-center text-sm text-muted">
-                No graph data available.
-              </div>
-            )}
+            ))}
           </div>
-        )}
+
+          {/* Keyboard hints */}
+          <div className="mt-4 flex items-center gap-3 text-[10px] text-muted">
+            <span>
+              <kbd className="rounded border border-border px-1 py-0.5 font-mono">j</kbd>{" "}
+              <kbd className="rounded border border-border px-1 py-0.5 font-mono">k</kbd>{" "}
+              navigate
+            </span>
+            <span>
+              <kbd className="rounded border border-border px-1 py-0.5 font-mono">Enter</kbd>{" "}
+              open
+            </span>
+            <span>
+              <kbd className="rounded border border-border px-1 py-0.5 font-mono">n</kbd>{" "}
+              new
+            </span>
+            <span>
+              <kbd className="rounded border border-border px-1 py-0.5 font-mono">Esc</kbd>{" "}
+              close
+            </span>
+          </div>
+        </div>
       </div>
 
       {/* Side panel */}
@@ -476,10 +249,10 @@ export default function ProjectDetailPage() {
             memoryId={panelMemoryId}
             projectId={projectId}
             onClose={() => setPanelMemoryId(null)}
-            onUpdated={fetchData}
+            onUpdated={refetch}
             onDeleted={() => {
               setPanelMemoryId(null);
-              fetchData();
+              refetch();
             }}
           />
         </aside>
@@ -490,7 +263,7 @@ export default function ProjectDetailPage() {
         projectId={projectId}
         open={saveOpen}
         onOpenChange={setSaveOpen}
-        onSaved={() => fetchData()}
+        onSaved={refetch}
       />
 
       {/* Delete confirmation */}

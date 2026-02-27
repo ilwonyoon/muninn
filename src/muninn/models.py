@@ -42,35 +42,6 @@ class MemorySource:
         return cls._valid
 
 
-class MemoryCategory:
-    # Exploration
-    BRAINSTORM = "brainstorm"
-    # Product axis
-    VISION = "vision"
-    PRODUCT = "product"
-    INSIGHT = "insight"
-    STATUS = "status"
-    # Engineering axis
-    ARCHITECTURE = "architecture"
-    DECISION = "decision"
-    IMPLEMENTATION = "implementation"
-    ISSUE = "issue"
-
-    _valid: frozenset[str] = frozenset({
-        "brainstorm",
-        "vision", "product", "insight", "status",
-        "architecture", "decision", "implementation", "issue",
-    })
-
-    @classmethod
-    def is_valid(cls, value: str) -> bool:
-        return value in cls._valid
-
-    @classmethod
-    def values(cls) -> frozenset[str]:
-        return cls._valid
-
-
 # ---------------------------------------------------------------------------
 # Validation helpers
 # ---------------------------------------------------------------------------
@@ -84,14 +55,6 @@ def validate_project_status(status: str) -> None:
         )
 
 
-def validate_memory_depth(depth: int) -> None:
-    """Raise ValueError if *depth* is outside the 0-3 range."""
-    if depth not in range(4):
-        raise ValueError(
-            f"Invalid memory depth {depth!r}. Must be an integer between 0 and 3."
-        )
-
-
 def validate_memory_source(source: str) -> None:
     """Raise ValueError if *source* is not a valid MemorySource."""
     if not MemorySource.is_valid(source):
@@ -101,28 +64,10 @@ def validate_memory_source(source: str) -> None:
         )
 
 
-def validate_memory_category(category: str) -> None:
-    """Raise ValueError if *category* is not a valid MemoryCategory."""
-    if not MemoryCategory.is_valid(category):
-        raise ValueError(
-            f"Invalid memory category {category!r}. "
-            f"Must be one of: {sorted(MemoryCategory.values())}"
-        )
-
-
 def validate_memory_content(content: str) -> None:
     """Raise ValueError if *content* is empty or whitespace-only."""
     if not content or not content.strip():
         raise ValueError("Memory content must not be empty or whitespace-only.")
-
-
-def validate_parent_depth(parent_depth: int, child_depth: int) -> None:
-    """Raise ValueError if parent depth is not strictly less than child depth."""
-    if parent_depth >= child_depth:
-        raise ValueError(
-            f"Parent depth ({parent_depth}) must be strictly less than "
-            f"child depth ({child_depth})."
-        )
 
 
 def validate_tags(tags: list[str] | tuple[str, ...] | None) -> list[str]:
@@ -180,16 +125,15 @@ class Memory:
     depth: int = 2
     source: str = MemorySource.CONVERSATION
     tags: tuple[str, ...] = field(default_factory=tuple)
-    category: str = MemoryCategory.STATUS
+    category: str = "status"
     superseded_by: str | None = None
     parent_memory_id: str | None = None
     title: str | None = None
     resolved: bool = False
 
     def __post_init__(self) -> None:
-        validate_memory_depth(self.depth)
         validate_memory_source(self.source)
-        validate_memory_category(self.category)
+        validate_memory_content(self.content)
         for tag in self.tags:
             if not tag or not tag.strip():
                 raise ValueError("Tags must be non-empty strings.")

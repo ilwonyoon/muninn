@@ -5,17 +5,6 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const DEPTH_LABELS: Record<number, string> = {
-  0: "L0",
-  1: "L1",
-  2: "L2",
-  3: "L3",
-};
-
-export function depthLabel(depth: number): string {
-  return DEPTH_LABELS[depth] ?? String(depth);
-}
-
 export function relativeTime(isoTimestamp: string): string {
   const dt = new Date(isoTimestamp);
   const now = new Date();

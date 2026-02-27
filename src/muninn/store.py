@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from muninn.models import Memory, MemorySource, Project, ProjectStatus, validate_memory_content, validate_memory_category, validate_tags
+from muninn.models import Memory, MemorySource, Project, ProjectStatus, validate_memory_content, validate_tags
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -497,24 +497,18 @@ class MuninnStore:
         self,
         project_id: str,
         content: str,
-        depth: int = 2,
         source: str = MemorySource.CONVERSATION,
         tags: list[str] | tuple[str, ...] | None = None,
-        category: str = "status",
-        parent_memory_id: str | None = None,
-        title: str | None = None,
     ) -> Memory:
         """Create a new memory and return it.
 
         Generates a UUID for the memory id, inserts it with optional tags,
         and bumps the parent project's ``updated_at``.
         """
-        from muninn.models import validate_memory_depth, validate_memory_source
+        from muninn.models import validate_memory_source
 
-        validate_memory_depth(depth)
         validate_memory_source(source)
         validate_memory_content(content)
-        validate_memory_category(category)
 
         memory_id = uuid.uuid4().hex
         now = _now_iso()
@@ -523,24 +517,12 @@ class MuninnStore:
         conn = self._get_connection()
         try:
             with conn:
-                if parent_memory_id is not None:
-                    parent_row = conn.execute(
-                        "SELECT depth, superseded_by FROM memories WHERE id = ?",
-                        (parent_memory_id,),
-                    ).fetchone()
-                    if parent_row is None:
-                        raise ValueError(f"Parent memory '{parent_memory_id}' not found.")
-                    if parent_row["superseded_by"] is not None:
-                        raise ValueError(f"Parent memory '{parent_memory_id}' is superseded/deleted.")
-                    from muninn.models import validate_parent_depth
-                    validate_parent_depth(parent_row["depth"], depth)
-
                 conn.execute(
                     """
                     INSERT INTO memories (id, project_id, content, depth, source, category, parent_memory_id, title, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (memory_id, project_id, content, depth, source, category, parent_memory_id, title, now, now),
+                    (memory_id, project_id, content, 1, source, 'status', None, None, now, now),
                 )
 
                 for tag in tag_list:
@@ -560,13 +542,13 @@ class MuninnStore:
             id=memory_id,
             project_id=project_id,
             content=content,
-            depth=depth,
+            depth=1,
             source=source,
             tags=tuple(tag_list),
-            category=category,
+            category='status',
             superseded_by=None,
-            parent_memory_id=parent_memory_id,
-            title=title,
+            parent_memory_id=None,
+            title=None,
             resolved=False,
             created_at=now,
             updated_at=now,
@@ -575,10 +557,8 @@ class MuninnStore:
     def recall(
         self,
         project_id: str | None = None,
-        depth: int = 2,
-        max_chars: int = 8000,
+        max_chars: int = 50000,
         tags: list[str] | None = None,
-        parent_id: str | None = None,
     ) -> tuple[dict[str, list[Memory]], dict[str, int]]:
         """Load memories grouped by project, respecting a character budget.
 
@@ -587,12 +567,9 @@ class MuninnStore:
         project_id:
             If given, only load memories for this project. Otherwise load
             memories for all **active** projects.
-        depth:
-            Maximum depth to include (0-3). Memories with ``depth <= depth``
-            are included.
         max_chars:
             Character budget.  Memories are accumulated sorted by
-            ``depth ASC, updated_at DESC``.  Once the budget is exceeded the
+            ``updated_at DESC``.  Once the budget is exceeded the
             remaining memories are dropped.
         tags:
             Optional tag filter — only memories having *all* listed tags are
@@ -601,7 +578,7 @@ class MuninnStore:
         Returns
         -------
         Tuple of (memories_by_project, stats) where memories_by_project maps
-        project_id to its list of memories (ordered depth ASC, updated_at DESC)
+        project_id to its list of memories (ordered updated_at DESC)
         and stats is a dict with keys: chars_loaded, chars_budget,
         memories_loaded, memories_dropped.
         """
@@ -627,9 +604,8 @@ class MuninnStore:
                     SELECT * FROM memories
                     WHERE project_id IN ({placeholders})
                       AND superseded_by IS NULL
-                      AND depth <= ?
                 """
-                params: list[object] = list(project_ids) + [depth]
+                params: list[object] = list(project_ids)
 
                 # Tag filter: require ALL tags present.
                 if tags:
@@ -641,11 +617,7 @@ class MuninnStore:
                         """
                         params.append(tag)
 
-                if parent_id is not None:
-                    query += " AND parent_memory_id = ?"
-                    params.append(parent_id)
-
-                query += " ORDER BY depth ASC, updated_at DESC"
+                query += " ORDER BY updated_at DESC"
 
                 mem_rows = conn.execute(query, params).fetchall()
 
@@ -789,17 +761,12 @@ class MuninnStore:
         self,
         memory_id: str,
         content: str | None = None,
-        depth: int | None = None,
         tags: list[str] | tuple[str, ...] | None = None,
-        category: str | None = None,
-        parent_memory_id: object = _UNSET,
-        title: object = _UNSET,
-        resolved: bool | None = None,
     ) -> "Memory | None":
-        """Update an existing memory's content, depth, tags, category, parent, title, and/or resolved.
+        """Update an existing memory's content and/or tags.
 
         Accepts full UUIDs or unique prefixes (e.g. first 6-8 chars).
-        Only non-None/non-UNSET parameters are updated. Returns the updated Memory,
+        Only non-None parameters are updated. Returns the updated Memory,
         or None if the memory was not found or is superseded.
         """
         now = _now_iso()
@@ -825,32 +792,6 @@ class MuninnStore:
                 if content is not None:
                     validate_memory_content(content)
                     updates["content"] = content
-                if depth is not None:
-                    from muninn.models import validate_memory_depth
-                    validate_memory_depth(depth)
-                    updates["depth"] = depth
-                if category is not None:
-                    validate_memory_category(category)
-                    updates["category"] = category
-
-                if parent_memory_id is not _UNSET:
-                    if parent_memory_id is not None:
-                        parent_row = conn.execute(
-                            "SELECT depth, superseded_by FROM memories WHERE id = ?",
-                            (parent_memory_id,),
-                        ).fetchone()
-                        if parent_row is None:
-                            raise ValueError(f"Parent memory '{parent_memory_id}' not found.")
-                        if parent_row["superseded_by"] is not None:
-                            raise ValueError(f"Parent memory '{parent_memory_id}' is superseded/deleted.")
-                        effective_depth = depth if depth is not None else row["depth"]
-                        from muninn.models import validate_parent_depth
-                        validate_parent_depth(parent_row["depth"], effective_depth)
-                    updates["parent_memory_id"] = parent_memory_id
-                if title is not _UNSET:
-                    updates["title"] = title
-                if resolved is not None:
-                    updates["resolved"] = int(resolved)
 
                 set_clause = ", ".join(f"{col} = ?" for col in updates)
                 values = list(updates.values()) + [memory_id]
@@ -931,47 +872,6 @@ class MuninnStore:
         finally:
             conn.close()
         return _row_to_memory(row, tags=tags)
-
-    def get_memory_tree(self, project_id: str) -> dict:
-        """Build a hierarchical tree using parent_memory_id relationships."""
-        conn = self._get_connection()
-        try:
-            with conn:
-                rows = conn.execute(
-                    "SELECT * FROM memories WHERE project_id = ? AND superseded_by IS NULL ORDER BY depth ASC, updated_at DESC",
-                    (project_id,),
-                ).fetchall()
-                mem_ids = [r["id"] for r in rows]
-                tags_map = _fetch_tags_for_memories(conn, mem_ids)
-        finally:
-            conn.close()
-        memories = [_row_to_memory(r, tags=tags_map.get(r["id"], ())) for r in rows]
-        roots = []
-        children: dict[str, list] = {}
-        edges = []
-        for mem in memories:
-            if mem.parent_memory_id is None:
-                roots.append(mem)
-            else:
-                children.setdefault(mem.parent_memory_id, []).append(mem)
-                edges.append({"id": f"e-{mem.parent_memory_id[:8]}-{mem.id[:8]}", "source": mem.parent_memory_id, "target": mem.id})
-        return {"roots": roots, "children": children, "edges": edges}
-
-    def get_depth_distribution(self, project_id: str) -> dict[int, int]:
-        """Return depth → count mapping for active memories in a project."""
-        conn = self._get_connection()
-        try:
-            rows = conn.execute(
-                """
-                SELECT depth, COUNT(*) AS cnt FROM memories
-                WHERE project_id = ? AND superseded_by IS NULL
-                GROUP BY depth
-                """,
-                (project_id,),
-            ).fetchall()
-        finally:
-            conn.close()
-        return {r["depth"]: r["cnt"] for r in rows}
 
     def get_all_tags(self, project_id: str | None = None) -> list[str]:
         """Return all distinct tags, optionally scoped to a project."""

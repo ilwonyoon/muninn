@@ -38,7 +38,7 @@ Muninn is a personal MCP (Model Context Protocol) memory server. Persistent proj
 ```
 src/muninn/
   __init__.py     # Package init
-  models.py       # Frozen dataclasses: Project, Memory, validators
+  models.py       # Frozen dataclasses: Project, Memory
   store.py        # SQLite operations: CRUD, recall, search, FTS5
   formatter.py    # LLM-readable output formatting
   tools.py        # MCP tool functions (6 tools)
@@ -53,7 +53,7 @@ tests/
   test_server.py         # CLI parsing, MCP instance creation
   test_auth.py           # Bearer token middleware tests
   test_api.py            # REST API endpoint tests
-  test_memory_quality.py # Memory quality validation tests
+  test_memory_quality.py # Memory quality tests
   test_github_sync.py    # GitHub sync tests
 web/                     # Next.js dashboard (localhost:3000 → API proxy to :8000)
 docs/
@@ -66,7 +66,7 @@ docs/
 # Install (editable with dev deps)
 uv pip install -e ".[dev]"
 
-# Run tests (236 tests)
+# Run tests (244 tests)
 .venv/bin/python -m pytest tests/ -v
 
 # Run the MCP server (stdio — default, used by all 4 clients)
@@ -97,21 +97,30 @@ cd web && npm run dev
 
 | Tool | Purpose |
 |------|---------|
-| `muninn_save` | Save memory to a project (auto-creates project if needed) |
-| `muninn_recall` | Load project context with depth/char budget filtering |
+| `muninn_save` | Save memory to a project (content + optional tags) |
+| `muninn_recall` | Load project memories (chronological, char budget) |
 | `muninn_search` | FTS5 full-text search across memories |
 | `muninn_status` | List all projects with status overview |
 | `muninn_manage` | Project/memory management (set_status, delete, update, create) |
 | `muninn_sync` | Sync GitHub repo data (commits, issues, PRs) into memory |
 
-## Depth System (Universal — works for any project type)
+## Memory Philosophy
 
-| Depth | Question | Use For |
-|-------|----------|---------|
-| 0 | "What is this?" | 10-second overview, always loaded |
-| 1 | "To continue" | Resume work next session (default recall) |
-| 2 | "To go deeper" | Dive into a specific area on request |
-| 3 | "Just in case" | Archive, reference, raw data |
+Muninn is a **bridge between AI clients**, not technical documentation.
+
+**Save:** thoughts, decisions, direction changes, what's next, product-level summaries.
+**Don't save:** code changes, test results, function names, implementation details (git handles that).
+
+Project summaries should describe what the project does from a **user/product perspective**, not an engineer perspective.
+
+## Project Status
+
+| Status | Meaning |
+|--------|---------|
+| `active` | Currently in progress |
+| `paused` | Temporarily on hold |
+| `idea` | Interest, exploration, not yet started |
+| `archived` | Completed / past project |
 
 ## Database
 
@@ -123,4 +132,4 @@ cd web && npm run dev
 - All tool functions return strings (never raise — catch exceptions internally)
 - Immutable patterns: frozen dataclasses, no mutation
 - Small focused files (<400 lines each)
-- Validators in models.py, not in store or tools
+- DB schema unchanged — deprecated columns (depth, category, parent_memory_id) remain but are ignored by code

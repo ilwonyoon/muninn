@@ -8,7 +8,6 @@ import { searchMemories, listTags } from "@/lib/api";
 import { useProjectStore } from "@/lib/store";
 import type { Memory } from "@/lib/types";
 import { truncate, relativeTime } from "@/lib/utils";
-import { DepthBadge } from "@/components/muninn/depth-badge";
 import { TagPill } from "@/components/muninn/tag-pill";
 
 export default function SearchPage() {
@@ -240,7 +239,9 @@ function SearchInner() {
                   href={`/projects/${mem.project_id}/${mem.short_id}`}
                   className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-card-hover"
                 >
-                  <DepthBadge depth={mem.depth} />
+                  <span className="shrink-0 rounded bg-card-hover px-1.5 py-0.5 font-mono text-[10px] text-muted">
+                    {mem.short_id}
+                  </span>
                   <div className="min-w-0 flex-1">
                     <div className="text-xs text-foreground">
                       {truncate(mem.content, 200)}

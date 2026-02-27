@@ -14,7 +14,6 @@ import { useProjectStore } from "@/lib/store";
 import type { Memory } from "@/lib/types";
 import { truncate } from "@/lib/utils";
 import { StatusDot } from "@/components/muninn/status-dot";
-import { DepthBadge } from "@/components/muninn/depth-badge";
 
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
@@ -120,7 +119,7 @@ export function CommandPalette() {
                     }
                     className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-xs text-foreground aria-selected:bg-card-hover"
                   >
-                    <DepthBadge depth={mem.depth} />
+                    <Brain className="h-3.5 w-3.5 shrink-0 text-muted" />
                     <span className="min-w-0 flex-1 truncate">
                       {truncate(mem.content, 60)}
                     </span>

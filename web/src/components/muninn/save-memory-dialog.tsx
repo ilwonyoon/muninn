@@ -24,7 +24,6 @@ export function SaveMemoryDialog({
 }) {
   const { toast } = useAppToast();
   const [content, setContent] = useState("");
-  const [depth, setDepth] = useState(1);
   const [tags, setTags] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -39,7 +38,6 @@ export function SaveMemoryDialog({
       const memory = await createMemory({
         project_id: projectId,
         content: content.trim(),
-        depth,
         tags: tagList.length > 0 ? tagList : undefined,
       });
       toast({ title: "Memory saved", variant: "success" });
@@ -47,7 +45,6 @@ export function SaveMemoryDialog({
       onOpenChange(false);
       // Reset
       setContent("");
-      setDepth(1);
       setTags("");
     } catch (err) {
       toast({
@@ -79,32 +76,17 @@ export function SaveMemoryDialog({
             autoFocus
           />
 
-          {/* Depth + Tags row */}
-          <div className="flex gap-3">
-            <div className="w-40">
-              <label className="text-[10px] text-muted">Depth</label>
-              <select
-                value={depth}
-                onChange={(e) => setDepth(Number(e.target.value))}
-                className="mt-1 w-full rounded border border-border bg-card px-2 py-1.5 font-mono text-xs text-foreground"
-              >
-                <option value={0}>0 - summary</option>
-                <option value={1}>1 - context</option>
-                <option value={2}>2 - detailed</option>
-                <option value={3}>3 - full</option>
-              </select>
-            </div>
-            <div className="flex-1">
-              <label className="text-[10px] text-muted">
-                Tags (comma-separated)
-              </label>
-              <input
-                value={tags}
-                onChange={(e) => setTags(e.target.value)}
-                placeholder="decision, architecture, ..."
-                className="mt-1 w-full rounded border border-border bg-card px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted focus:border-accent focus:outline-none"
-              />
-            </div>
+          {/* Tags */}
+          <div>
+            <label className="text-[10px] text-muted">
+              Tags (comma-separated)
+            </label>
+            <input
+              value={tags}
+              onChange={(e) => setTags(e.target.value)}
+              placeholder="decision, architecture, ..."
+              className="mt-1 w-full rounded border border-border bg-card px-2 py-1.5 font-mono text-xs text-foreground placeholder:text-muted focus:border-accent focus:outline-none"
+            />
           </div>
 
           {/* Actions */}

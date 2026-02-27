@@ -23,13 +23,11 @@ def _save_memory(
     store: MuninnStore,
     project_id: str = "proj-1",
     content: str = "A memory",
-    depth: int = 1,
     tags: list[str] | None = None,
 ) -> object:
     return store.save_memory(
         project_id=project_id,
         content=content,
-        depth=depth,
         tags=tags,
     )
 
@@ -180,7 +178,6 @@ class TestSaveMemory:
         memory = store.save_memory(
             project_id="proj-1",
             content="Important decision",
-            depth=2,
             source=MemorySource.MANUAL,
         )
 
@@ -188,7 +185,6 @@ class TestSaveMemory:
         assert len(memory.id) == 32  # uuid4().hex is 32 hex chars
         assert memory.project_id == "proj-1"
         assert memory.content == "Important decision"
-        assert memory.depth == 2
         assert memory.source == MemorySource.MANUAL
         assert memory.superseded_by is None
         assert memory.created_at is not None
@@ -224,32 +220,6 @@ class TestSaveMemory:
         assert refreshed is not None
 
         assert refreshed.updated_at >= original.updated_at
-
-    def test_save_memory_invalid_depth_negative(self, store):
-        """save_memory raises ValueError for depth < 0."""
-        _make_project(store)
-
-        with pytest.raises(ValueError):
-            store.save_memory(project_id="proj-1", content="Bad depth", depth=-1)
-
-    def test_save_memory_invalid_depth_too_high(self, store):
-        """save_memory raises ValueError for depth > 3."""
-        _make_project(store)
-
-        with pytest.raises(ValueError):
-            store.save_memory(project_id="proj-1", content="Bad depth", depth=4)
-
-    def test_save_memory_valid_depths(self, store):
-        """save_memory accepts all valid depths 0-3."""
-        _make_project(store)
-
-        for depth in range(4):
-            memory = store.save_memory(
-                project_id="proj-1",
-                content=f"Depth {depth}",
-                depth=depth,
-            )
-            assert memory.depth == depth
 
 
 # ---------------------------------------------------------------------------
@@ -296,30 +266,14 @@ class TestRecall:
         assert "proj-active" in result
         assert "proj-paused" not in result
 
-    def test_recall_depth_filter(self, store):
-        """Only memories with depth <= requested depth are returned."""
-        _make_project(store)
-        store.save_memory(project_id="proj-1", content="Depth 0", depth=0)
-        store.save_memory(project_id="proj-1", content="Depth 1", depth=1)
-        store.save_memory(project_id="proj-1", content="Depth 2", depth=2)
-        store.save_memory(project_id="proj-1", content="Depth 3", depth=3)
-
-        result, stats = store.recall(project_id="proj-1", depth=1)
-
-        contents = [m.content for m in result.get("proj-1", [])]
-        assert "Depth 0" in contents
-        assert "Depth 1" in contents
-        assert "Depth 2" not in contents
-        assert "Depth 3" not in contents
-
     def test_recall_character_budget(self, store):
         """Memories are truncated when max_chars is exceeded."""
         _make_project(store)
         # Each memory is ~50 chars; budget forces truncation.
         for i in range(10):
-            store.save_memory(project_id="proj-1", content="A" * 50, depth=1)
+            store.save_memory(project_id="proj-1", content="A" * 50)
 
-        result, stats = store.recall(project_id="proj-1", depth=1, max_chars=100)
+        result, stats = store.recall(project_id="proj-1", max_chars=100)
 
         # Should return at most 2 memories (100 / 50 = 2).
         memories = result.get("proj-1", [])
@@ -333,7 +287,7 @@ class TestRecall:
         store.save_memory(project_id="proj-1", content="Only auth", tags=["auth"])
         store.save_memory(project_id="proj-1", content="No tags")
 
-        result, stats = store.recall(project_id="proj-1", depth=3, tags=["auth", "security"])
+        result, stats = store.recall(project_id="proj-1", tags=["auth", "security"])
 
         memories = result.get("proj-1", [])
         assert len(memories) == 1
@@ -346,7 +300,7 @@ class TestRecall:
         new = store.save_memory(project_id="proj-1", content="New memory")
         store.supersede_memory(old.id, new.id)
 
-        result, stats = store.recall(project_id="proj-1", depth=3)
+        result, stats = store.recall(project_id="proj-1")
 
         memories = result.get("proj-1", [])
         contents = [m.content for m in memories]
@@ -354,20 +308,21 @@ class TestRecall:
         assert "New memory" in contents
 
     def test_recall_sort_order(self, store):
-        """Memories are sorted depth ASC, updated_at DESC."""
+        """Memories are sorted by updated_at DESC."""
         _make_project(store)
-        store.save_memory(project_id="proj-1", content="D2 first", depth=2)
-        store.save_memory(project_id="proj-1", content="D1 later", depth=1)
-        store.save_memory(project_id="proj-1", content="D1 earliest", depth=1)
+        store.save_memory(project_id="proj-1", content="First saved")
+        time.sleep(0.01)
+        store.save_memory(project_id="proj-1", content="Second saved")
+        time.sleep(0.01)
+        store.save_memory(project_id="proj-1", content="Third saved")
 
-        result, stats = store.recall(project_id="proj-1", depth=3, max_chars=99999)
+        result, stats = store.recall(project_id="proj-1", max_chars=99999)
 
         memories = result.get("proj-1", [])
-        depths = [m.depth for m in memories]
-        # All depth-1 memories should come before depth-2.
-        d1_indices = [i for i, d in enumerate(depths) if d == 1]
-        d2_indices = [i for i, d in enumerate(depths) if d == 2]
-        assert max(d1_indices) < min(d2_indices)
+        # Newest first (updated_at DESC)
+        assert memories[0].content == "Third saved"
+        assert memories[1].content == "Second saved"
+        assert memories[2].content == "First saved"
 
 
 # ---------------------------------------------------------------------------
@@ -448,7 +403,7 @@ class TestDeleteMemory:
 
         assert result is True
         # Verify via recall: the deleted memory should not appear.
-        recalled, _stats = store.recall(project_id="proj-1", depth=3)
+        recalled, _stats = store.recall(project_id="proj-1")
         memories = recalled.get("proj-1", [])
         assert all(m.id != memory.id for m in memories)
 
@@ -479,14 +434,6 @@ class TestUpdateMemory:
         assert updated is not None
         assert updated.content == "New content"
         assert updated.id == mem.id
-
-    def test_update_depth(self, store):
-        """update_memory changes depth."""
-        _make_project(store)
-        mem = _save_memory(store, content="Some info", depth=1)
-        updated = store.update_memory(mem.id, depth=0)
-        assert updated is not None
-        assert updated.depth == 0
 
     def test_update_tags(self, store):
         """update_memory replaces tags."""
@@ -535,7 +482,7 @@ class TestPrefixIdMatching:
         result = store.delete_memory(prefix)
 
         assert result is True
-        recalled, _ = store.recall(project_id="proj-1", depth=3)
+        recalled, _ = store.recall(project_id="proj-1")
         memories = recalled.get("proj-1", [])
         assert all(m.id != mem.id for m in memories)
 
@@ -580,7 +527,7 @@ class TestSupersedeMemory:
 
         assert result is True
         # Old memory should no longer appear in recall.
-        recalled, _stats = store.recall(project_id="proj-1", depth=3)
+        recalled, _stats = store.recall(project_id="proj-1")
         memories = recalled.get("proj-1", [])
         ids = [m.id for m in memories]
         assert old.id not in ids

@@ -9,7 +9,6 @@ import type {
   DashboardStats,
   MemoriesResponse,
   Memory,
-  MemoryTreeResponse,
   Project,
   SearchResponse,
 } from "./types";
@@ -67,10 +66,9 @@ export function updateProject(
 
 export function listMemories(
   projectId: string,
-  opts?: { depth?: number; maxChars?: number; tags?: string[] }
+  opts?: { maxChars?: number; tags?: string[] }
 ): Promise<MemoriesResponse> {
   const params = new URLSearchParams();
-  if (opts?.depth !== undefined) params.set("depth", String(opts.depth));
   if (opts?.maxChars) params.set("max_chars", String(opts.maxChars));
   if (opts?.tags?.length) params.set("tags", opts.tags.join(","));
   const qs = params.toString();
@@ -84,11 +82,8 @@ export function getMemory(id: string): Promise<Memory> {
 export function createMemory(data: {
   project_id: string;
   content: string;
-  depth?: number;
   tags?: string[];
-  category?: string;
-  parent_memory_id?: string | null;
-  title?: string | null;
+  source?: string;
 }): Promise<Memory> {
   return fetchJSON("/memories", {
     method: "POST",
@@ -98,7 +93,7 @@ export function createMemory(data: {
 
 export function updateMemory(
   id: string,
-  data: Partial<Pick<Memory, "content" | "depth" | "tags" | "category" | "parent_memory_id" | "title" | "resolved">>
+  data: Partial<Pick<Memory, "content" | "tags">>
 ): Promise<Memory> {
   return fetchJSON(`/memories/${id}`, {
     method: "PATCH",
@@ -112,12 +107,6 @@ export function deleteMemory(id: string): Promise<{ deleted: boolean }> {
 
 export function getSupersedeChain(id: string): Promise<Memory[]> {
   return fetchJSON(`/memories/${id}/chain`);
-}
-
-// -- Tree -------------------------------------------------------------------
-
-export function getMemoryTree(projectId: string): Promise<MemoryTreeResponse> {
-  return fetchJSON(`/projects/${projectId}/tree`);
 }
 
 // -- Search, Tags, Stats ----------------------------------------------------

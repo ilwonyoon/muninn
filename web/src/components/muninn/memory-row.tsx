@@ -1,13 +1,18 @@
 "use client";
 
-import { Pencil, Trash2 } from "lucide-react";
-import type { Memory } from "@/lib/types";
-import { relativeTime, truncate, cn } from "@/lib/utils";
-import { DepthBadge } from "@/components/muninn/depth-badge";
+import { Trash2, Pencil } from "lucide-react";
 import { TagPill } from "@/components/muninn/tag-pill";
+import { cn, extractTitle, extractBody, relativeTime } from "@/lib/utils";
 
 interface MemoryRowProps {
-  memory: Memory;
+  memory: {
+    id: string;
+    short_id: string;
+    content: string;
+    tags: string[];
+    updated_at: string;
+    superseded_by: string | null;
+  };
   selected: boolean;
   active: boolean;
   onSelect: () => void;
@@ -23,67 +28,75 @@ export function MemoryRow({
   onEdit,
   onDelete,
 }: MemoryRowProps) {
+  const title = extractTitle(memory.content);
+  const body = extractBody(memory.content);
+
+  const handleEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onEdit();
+  };
+
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onDelete();
+  };
+
   return (
     <div
       role="button"
       tabIndex={0}
       onClick={onSelect}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onSelect();
-        }
-      }}
+      onKeyDown={(e) => e.key === "Enter" && onSelect()}
       className={cn(
-        "group flex cursor-pointer items-start gap-3 px-4 py-2.5 transition-colors",
-        selected && !active && "bg-card-hover",
-        active && "border-l-2 border-accent bg-card-hover/50"
+        "group cursor-pointer px-4 py-3 transition-colors",
+        "hover:bg-card-hover",
+        selected && "bg-card-hover",
+        active && "border-l-2 border-l-accent bg-card-hover",
+        !active && "border-l-2 border-l-transparent",
+        memory.superseded_by && "opacity-50"
       )}
     >
-      <DepthBadge depth={memory.depth} />
-      <div className="min-w-0 flex-1">
-        <div className="text-sm leading-snug text-foreground">
-          {truncate(memory.content, 200)}
-        </div>
+      {/* Title */}
+      <p className="text-xs font-medium leading-snug text-foreground">
+        {title}
+      </p>
+
+      {/* Body preview */}
+      {body && (
+        <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">
+          {body}
+        </p>
+      )}
+
+      {/* Bottom row: tags + time + short_id + actions */}
+      <div className="mt-2 flex items-center gap-2">
         {memory.tags.length > 0 && (
-          <div className="mt-1 flex gap-1">
+          <div className="flex flex-wrap gap-1">
             {memory.tags.map((tag) => (
               <TagPill key={tag} tag={tag} />
             ))}
           </div>
         )}
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <div className="flex flex-col items-end gap-0.5">
-          <span className="font-mono text-[10px] text-muted">
-            {memory.short_id}
-          </span>
-          <span className="text-[10px] text-muted">
-            {relativeTime(memory.updated_at)}
-          </span>
-        </div>
-        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100">
+        <span className="ml-auto flex items-center gap-2 font-mono text-[10px] text-muted">
+          <span>{relativeTime(memory.updated_at)}</span>
+          <span>{memory.short_id}</span>
+        </span>
+        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onEdit();
-            }}
-            className="rounded p-1 text-muted hover:bg-card-hover hover:text-foreground"
+            onClick={handleEdit}
             title="Edit"
+            className="rounded p-0.5 text-muted hover:text-foreground"
           >
-            <Pencil className="h-3 w-3" />
+            <Pencil size={11} />
           </button>
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-            className="rounded p-1 text-muted hover:bg-card-hover hover:text-red-400"
+            onClick={handleDelete}
             title="Delete"
+            className="rounded p-0.5 text-muted hover:text-red-400"
           >
-            <Trash2 className="h-3 w-3" />
+            <Trash2 size={11} />
           </button>
         </div>
       </div>

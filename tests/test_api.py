@@ -36,10 +36,10 @@ def seeded_store(api_store):
     """Return a store with sample projects and memories."""
     api_store.create_project(id="muninn", name="Muninn", summary="MCP memory server")
     api_store.create_project(id="aido", name="Aido")
-    api_store.save_memory("muninn", "Project identity: MCP memory server", depth=0, tags=["core"])
-    api_store.save_memory("muninn", "Using SQLite with WAL mode", depth=1, tags=["decision", "architecture"])
-    api_store.save_memory("muninn", "Full schema design notes", depth=2, tags=["architecture"])
-    api_store.save_memory("aido", "AI startup scoring engine", depth=0, tags=["core"])
+    api_store.save_memory("muninn", "Project identity: MCP memory server", tags=["core"])
+    api_store.save_memory("muninn", "Using SQLite with WAL mode", tags=["decision", "architecture"])
+    api_store.save_memory("muninn", "Full schema design notes", tags=["architecture"])
+    api_store.save_memory("aido", "AI startup scoring engine", tags=["core"])
     return api_store
 
 
@@ -97,15 +97,6 @@ class TestGetProject:
         assert data["id"] == "muninn"
         assert data["name"] == "Muninn"
         assert data["summary"] == "MCP memory server"
-        assert "depth_distribution" in data
-
-    def test_depth_distribution(self, seeded_client):
-        resp = seeded_client.get("/api/projects/muninn")
-        dist = resp.json()["depth_distribution"]
-        # Keys are strings in JSON
-        assert dist["0"] == 1
-        assert dist["1"] == 1
-        assert dist["2"] == 1
 
     def test_not_found(self, client):
         resp = client.get("/api/projects/nonexistent")
@@ -187,12 +178,6 @@ class TestListMemories:
         assert "stats" in data
         assert len(data["memories"]) == 3
 
-    def test_depth_filter(self, seeded_client):
-        resp = seeded_client.get("/api/projects/muninn/memories?depth=0")
-        memories = resp.json()["memories"]
-        assert len(memories) == 1
-        assert memories[0]["depth"] == 0
-
     def test_tags_filter(self, seeded_client):
         resp = seeded_client.get("/api/projects/muninn/memories?tags=architecture")
         memories = resp.json()["memories"]
@@ -210,8 +195,6 @@ class TestListMemories:
         assert "id" in mem
         assert "short_id" in mem
         assert "content" in mem
-        assert "depth" in mem
-        assert "depth_label" in mem
         assert "tags" in mem
         assert isinstance(mem["tags"], list)
 
@@ -234,13 +217,11 @@ class TestCreateMemory:
         resp = seeded_client.post("/api/memories", json={
             "project_id": "muninn",
             "content": "New decision: use Starlette REST",
-            "depth": 1,
             "tags": ["decision"],
         })
         assert resp.status_code == 201
         data = resp.json()
         assert data["content"] == "New decision: use Starlette REST"
-        assert data["depth"] == 1
         assert data["tags"] == ["decision"]
         assert data["source"] == "manual"
 
@@ -264,14 +245,14 @@ class TestCreateMemory:
 class TestGetMemory:
     def test_get_memory_by_id(self, seeded_client, seeded_store):
         # Get a known memory ID
-        memories, _ = seeded_store.recall(project_id="muninn", depth=0)
+        memories, _ = seeded_store.recall(project_id="muninn")
         mem_id = memories["muninn"][0].id
         resp = seeded_client.get(f"/api/memories/{mem_id}")
         assert resp.status_code == 200
         assert resp.json()["id"] == mem_id
 
     def test_get_memory_by_prefix(self, seeded_client, seeded_store):
-        memories, _ = seeded_store.recall(project_id="muninn", depth=0)
+        memories, _ = seeded_store.recall(project_id="muninn")
         mem_id = memories["muninn"][0].id
         resp = seeded_client.get(f"/api/memories/{mem_id[:8]}")
         assert resp.status_code == 200
@@ -289,7 +270,7 @@ class TestGetMemory:
 
 class TestUpdateMemory:
     def test_update_content(self, seeded_client, seeded_store):
-        memories, _ = seeded_store.recall(project_id="muninn", depth=1)
+        memories, _ = seeded_store.recall(project_id="muninn")
         mem_id = memories["muninn"][0].id
         resp = seeded_client.patch(f"/api/memories/{mem_id}", json={
             "content": "Updated content",
@@ -298,7 +279,7 @@ class TestUpdateMemory:
         assert resp.json()["content"] == "Updated content"
 
     def test_update_tags(self, seeded_client, seeded_store):
-        memories, _ = seeded_store.recall(project_id="muninn", depth=0)
+        memories, _ = seeded_store.recall(project_id="muninn")
         mem_id = memories["muninn"][0].id
         resp = seeded_client.patch(f"/api/memories/{mem_id}", json={
             "tags": ["updated", "core"],
@@ -311,7 +292,7 @@ class TestUpdateMemory:
         assert resp.status_code == 404
 
     def test_empty_update(self, seeded_client, seeded_store):
-        memories, _ = seeded_store.recall(project_id="muninn", depth=0)
+        memories, _ = seeded_store.recall(project_id="muninn")
         mem_id = memories["muninn"][0].id
         resp = seeded_client.patch(f"/api/memories/{mem_id}", json={})
         assert resp.status_code == 400
@@ -324,14 +305,14 @@ class TestUpdateMemory:
 
 class TestDeleteMemory:
     def test_delete_memory(self, seeded_client, seeded_store):
-        memories, _ = seeded_store.recall(project_id="muninn", depth=0)
+        memories, _ = seeded_store.recall(project_id="muninn")
         mem_id = memories["muninn"][0].id
         resp = seeded_client.delete(f"/api/memories/{mem_id}")
         assert resp.status_code == 200
         assert resp.json()["deleted"] is True
 
         # Verify it's gone from recall
-        memories2, _ = seeded_store.recall(project_id="muninn", depth=0)
+        memories2, _ = seeded_store.recall(project_id="muninn")
         ids = [m.id for m in memories2.get("muninn", [])]
         assert mem_id not in ids
 
@@ -426,7 +407,7 @@ class TestStats:
 
 class TestSupersedeChain:
     def test_single_memory_chain(self, seeded_client, seeded_store):
-        memories, _ = seeded_store.recall(project_id="muninn", depth=0)
+        memories, _ = seeded_store.recall(project_id="muninn")
         mem_id = memories["muninn"][0].id
         resp = seeded_client.get(f"/api/memories/{mem_id}/chain")
         assert resp.status_code == 200
@@ -436,9 +417,9 @@ class TestSupersedeChain:
 
     def test_supersede_chain(self, seeded_client, seeded_store):
         # Create a chain: m1 → m2 → m3
-        m1 = seeded_store.save_memory("muninn", "Version 1", depth=1)
-        m2 = seeded_store.save_memory("muninn", "Version 2", depth=1)
-        m3 = seeded_store.save_memory("muninn", "Version 3", depth=1)
+        m1 = seeded_store.save_memory("muninn", "Version 1")
+        m2 = seeded_store.save_memory("muninn", "Version 2")
+        m3 = seeded_store.save_memory("muninn", "Version 3")
         seeded_store.supersede_memory(m1.id, m2.id)
         seeded_store.supersede_memory(m2.id, m3.id)
 

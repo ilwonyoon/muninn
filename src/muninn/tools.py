@@ -46,7 +46,6 @@ def _get_store() -> MuninnStore:
 def _log_usage(
     tool: str,
     project: str | None = None,
-    depth: int | None = None,
 ) -> None:
     """Append a usage log entry to ~/.local/share/muninn/usage.jsonl.
 
@@ -63,7 +62,6 @@ def _log_usage(
             "ts": datetime.now(timezone.utc).isoformat(),
             "tool": tool,
             "project": project,
-            "depth": depth,
         }
         with open(log_path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry) + "\n")
@@ -79,43 +77,9 @@ def _log_usage(
 def muninn_save(
     project: str,
     content: str,
-    depth: int = 2,
     tags: tuple[str, ...] | list[str] | None = None,
-    category: str = "status",
-    parent_memory_id: str | None = None,
-    title: str | None = None,
 ) -> str:
     """Save a distilled memory to a project. Auto-creates the project if it does not exist.
-
-    HIERARCHY — memories are organized in a parent-child tree:
-      L0 (depth=0) — Project identity. One per project. Create FIRST.
-                     Example: "Muninn: Python MCP memory server. SQLite + FTS5."
-      L1 (depth=1) — Topic index entries. One per major topic area.
-                     Example: "Auth: Bearer token via MUNINN_API_KEY."
-      L2 (depth=2) — Working memories under a topic. DEFAULT depth.
-                     Example: "Decided to remove OAuth — local-only scope."
-      L3 (depth=3) — Archive / raw data under a working memory.
-                     Example: Raw benchmark results, old schema versions.
-
-    SAVE PATTERN:
-      1. Check existing L1 index: muninn_recall(project, depth=1)
-      2. If topic L1 exists, save L2 under it: parent_memory_id=<l1_id>
-      3. If topic L1 is new, create it first, then save L2 under it.
-      4. Always set title= for skimmability (max 60 chars, plain text).
-
-    CATEGORY — classifies the type of content being stored:
-      ## Exploration
-      category="brainstorm"     — Unfiltered ideation: voice chat dumps, what-if explorations, early-stage thinking. Mark resolved=true when ideas graduate to decision/product.
-      ## Product categories
-      category="vision"         — Why this project exists: motivation, target users, market, business model
-      category="product"        — What to build: scope decisions, UX principles, feature tradeoffs
-      category="insight"        — User observations, usage patterns, discovered behaviors, feedback
-      category="status"         — Current state: milestones, progress, what's next (DEFAULT)
-      ## Engineering categories
-      category="architecture"   — System structure: tech stack, modules, data models, schemas
-      category="decision"       — Engineering rationale: why this approach, tradeoffs considered
-      category="implementation" — Code-level facts: config, commands, file paths, API contracts
-      category="issue"          — Bugs, errors, blockers, unresolved hurdles
 
     TAGS — always set 1-3 tags per memory to enable later filtering:
       Decisions:    ['decision', 'architecture'] or ['decision', 'api']
@@ -127,11 +91,10 @@ def muninn_save(
 
     RULES:
       - One topic per memory. Split unrelated facts into separate muninn_save calls.
-      - L0-L1 must be skimmable in under 5 seconds — cut anything redundant.
       - Prefer concrete over vague: 'Using hatchling' beats 'build system chosen'.
       - Update stale memories via muninn_manage update_memory instead of adding duplicates.
     """
-    _log_usage("muninn_save", project=project, depth=depth)
+    _log_usage("muninn_save", project=project)
     try:
         store = _get_store()
 
@@ -143,11 +106,7 @@ def muninn_save(
         memory = store.save_memory(
             project_id=project,
             content=content,
-            depth=depth,
             tags=tags,
-            category=category,
-            parent_memory_id=parent_memory_id,
-            title=title,
         )
 
         # Re-fetch project so memory_count is up-to-date.
@@ -163,10 +122,8 @@ def muninn_save(
 
 def muninn_recall(
     project: str | None = None,
-    depth: int = 2,
     max_chars: int = 8000,
     tags: list[str] | None = None,
-    parent_id: str | None = None,
 ) -> str:
     """Load project context from Muninn memory.
 
@@ -176,38 +133,20 @@ def muninn_recall(
       - Switching focus: call when the conversation shifts to a different project.
       - After search: call after muninn_search to load full context for a found project.
 
-    DRILL-DOWN PATTERN:
-      1. Start with depth=1 to get the topic index (L1 entries).
-      2. Find the relevant L1 topic memory id.
-      3. Call again with parent_id=<l1_id>, depth=2 to load working memories under it.
-      4. Use depth=3 only for archives.
-
-    DEPTH — controls how much to load (cumulative, each level includes all above):
-      depth=0  — L0 identity only. Quick project identity, always 1-2 sentences.
-                 Use when you just need to know if a project exists.
-      depth=1  — L0 + L1 topic index. Resumes work from last session.
-                 Use this at session start for any active project.
-      depth=2  — Above + L2 working memories. Full current context. DEFAULT.
-                 Use when the user explicitly asks to dive into a specific area.
-      depth=3  — Everything including L3 archives. Rarely needed.
-
     If no project is specified, loads all active projects (useful at session start
     when you don't yet know which project the user will work on).
 
     max_chars caps total output to protect context window. Memories load
-    lowest-depth-first, newest-first within each depth. If the budget is hit,
-    deeper and older memories are dropped silently.
+    newest-first. If the budget is hit, older memories are dropped silently.
     """
-    _log_usage("muninn_recall", project=project, depth=depth)
+    _log_usage("muninn_recall", project=project)
     try:
         store = _get_store()
 
         memories_by_project, recall_stats = store.recall(
             project_id=project,
-            depth=depth,
             max_chars=max_chars,
             tags=tags,
-            parent_id=parent_id,
         )
 
         # Build the dict[str, tuple[Project, list[Memory]]] that
@@ -315,9 +254,8 @@ def muninn_manage(
 
     update_memory — Edit an existing memory in place.
       Required: memory_id
-      Optional: field = content | depth | tags
+      Optional: field = content | tags
         field="content", value="new text"           — rewrite the memory
-        field="depth", value="2"                    — change depth level
         field="tags", value="decision,architecture" — replace all tags (comma-separated)
       Prefer this over delete + re-save to preserve memory history.
       Example: action="update_memory", project="muninn", memory_id="abc123...",
@@ -386,23 +324,10 @@ def muninn_manage(
             update_kwargs: dict[str, object] = {}
             if field == "content" and value is not None:
                 update_kwargs["content"] = value
-            elif field == "depth" and value is not None:
-                try:
-                    update_kwargs["depth"] = int(value)
-                except ValueError:
-                    return f"Error: depth must be an integer, got '{value}'."
             elif field == "tags" and value is not None:
                 update_kwargs["tags"] = [t.strip() for t in value.split(",") if t.strip()]
-            elif field == "category" and value is not None:
-                update_kwargs["category"] = value
-            elif field == "parent_memory_id":
-                update_kwargs["parent_memory_id"] = value  # None clears the parent
-            elif field == "title":
-                update_kwargs["title"] = value  # None clears the title
-            elif field == "resolved" and value is not None:
-                update_kwargs["resolved"] = value.lower() in ("true", "1", "yes")
             elif field is not None:
-                return f"Error: invalid field '{field}' for update_memory. Must be one of: content, depth, tags, category, parent_memory_id, title, resolved."
+                return f"Error: invalid field '{field}' for update_memory. Must be one of: content, tags."
             elif value is not None:
                 # No field specified but value given — default to content update
                 update_kwargs["content"] = value

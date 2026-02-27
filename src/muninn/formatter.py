@@ -11,8 +11,6 @@ from muninn.models import Memory, Project, ProjectStatus
 # Helpers
 # ---------------------------------------------------------------------------
 
-_DEPTH_LABELS = {0: "L0:identity", 1: "L1:index", 2: "L2:working", 3: "L3:archive"}
-
 _STATUS_EMOJI = {
     ProjectStatus.ACTIVE: "🟢",
     ProjectStatus.PAUSED: "⏸️",
@@ -90,7 +88,7 @@ def format_recall(
     projects_memories: dict[str, tuple[Project, list[Memory]]],
     stats: dict[str, int] | None = None,
 ) -> str:
-    """Format recall output for LLM consumption with parent-child hierarchy.
+    """Format recall output for LLM consumption as a flat chronological list.
 
     Args:
         projects_memories: Mapping of project_id to (Project, list[Memory]).
@@ -117,32 +115,12 @@ def format_recall(
 
         lines.append("")
 
-        # Build id → memory lookup and parent → children map.
-        mem_by_id: dict[str, Memory] = {m.id: m for m in memories}
-        children_map: dict[str, list[Memory]] = {}
-        roots: list[Memory] = []
-        for mem in sorted(memories, key=lambda m: (m.depth, m.updated_at), reverse=False):
-            pid = mem.parent_memory_id
-            if pid is None or pid not in mem_by_id:
-                roots.append(mem)
-            else:
-                children_map.setdefault(pid, []).append(mem)
-
-        def _render_mem(mem: Memory, indent: int) -> None:
-            label = _DEPTH_LABELS.get(mem.depth, str(mem.depth))
-            date = _date_label(mem.updated_at)
+        for mem in memories:
             short_id = mem.id[:8] if len(mem.id) >= 8 else mem.id
-            prefix = "  " * indent + "- "
-            title_part = f" [{mem.title}]" if mem.title else ""
-            resolved_mark = " [resolved]" if mem.resolved else ""
-            lines.append(f"{prefix}[{label}]{title_part}{resolved_mark} ({short_id}) {mem.content} ({date})")
+            date = relative_time(mem.updated_at)
+            lines.append(f"- [{short_id}] {mem.content} ({date})")
             if mem.tags:
-                lines.append("  " * indent + f"  tags: {', '.join(mem.tags)}")
-            for child in sorted(children_map.get(mem.id, []), key=lambda m: m.updated_at, reverse=True):
-                _render_mem(child, indent + 1)
-
-        for root in sorted(roots, key=lambda m: (m.depth, m.updated_at), reverse=False):
-            _render_mem(root, 0)
+                lines.append(f"  tags: {', '.join(mem.tags)}")
 
         sections.append("\n".join(lines))
 
@@ -225,12 +203,9 @@ def format_search_results(
         return "\n".join(lines)
 
     for mem in memories:
-        label = _DEPTH_LABELS.get(mem.depth, str(mem.depth))
-        date = _date_label(mem.updated_at)
+        date = relative_time(mem.updated_at)
         short_id = mem.id[:8] if len(mem.id) >= 8 else mem.id
-        title_part = f" [{mem.title}]" if mem.title else ""
-        resolved_mark = " [resolved]" if mem.resolved else ""
-        lines.append(f"[{mem.project_id}] ({short_id}){title_part}{resolved_mark} {mem.content} ({label}, {date})")
+        lines.append(f"[{mem.project_id}] ({short_id}) {mem.content} — {date}")
         if mem.tags:
             lines.append(f"  tags: {', '.join(mem.tags)}")
 
@@ -251,17 +226,10 @@ def format_save_confirmation(memory: Memory, project: Project) -> str:
     Returns:
         Plain-text confirmation string.
     """
-    label = _DEPTH_LABELS.get(memory.depth, str(memory.depth))
     tags_display = ", ".join(memory.tags) if memory.tags else "none"
     short_id = memory.id[:8] if len(memory.id) >= 8 else memory.id
 
-    title_part = f" | Title: {memory.title}" if memory.title else ""
-    parent_part = f" | Parent: {memory.parent_memory_id[:8]}" if memory.parent_memory_id else ""
-
-    line1 = f"Saved to {project.id} (memory: {short_id})"
-    line2 = f"Depth: {label}{title_part}{parent_part} | Tags: {tags_display} | Project memories: {project.memory_count}"
-
-    return f"✅ {line1}\n{line2}"
+    return f"✅ Saved to {project.id} (memory: {short_id})\nTags: {tags_display} | Project memories: {project.memory_count}"
 
 
 def format_manage_result(action: str, details: str) -> str:

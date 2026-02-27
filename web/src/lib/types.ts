@@ -8,8 +8,6 @@ export interface Project {
   created_at: string;
   updated_at: string;
   memory_count: number;
-  /** Only present on GET /api/projects/:id */
-  depth_distribution?: Record<string, number>;
 }
 
 /** Mirrors Python Memory dataclass. */
@@ -18,15 +16,9 @@ export interface Memory {
   short_id: string;
   project_id: string;
   content: string;
-  depth: number;
-  depth_label: string;
   source: "conversation" | "github" | "manual";
   tags: string[];
   superseded_by: string | null;
-  category: "brainstorm" | "vision" | "product" | "insight" | "status" | "architecture" | "decision" | "implementation" | "issue";
-  parent_memory_id: string | null;
-  title: string | null;
-  resolved: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -53,25 +45,6 @@ export interface DashboardStats {
   active_projects: number;
   total_memories: number;
   stale_projects: number;
-}
-
-export interface GraphEdge {
-  id: string;
-  source: string;
-  target: string;
-}
-
-export interface TreeEdge {
-  id: string;
-  source: string;
-  target: string;
-  category: string;
-}
-
-export interface MemoryTreeResponse {
-  roots: Memory[];
-  children: Record<string, Memory[]>;
-  edges: TreeEdge[];
 }
 
 export interface ApiError {

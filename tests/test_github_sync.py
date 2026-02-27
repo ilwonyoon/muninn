@@ -213,7 +213,7 @@ class TestSyncSavesMemory:
 
         # Recall and check the memory exists with correct source
         memories_by_project, _ = initialized_store.recall(
-            project_id="savproj", depth=1
+            project_id="savproj"
         )
         memories = memories_by_project.get("savproj", [])
         github_memories = [m for m in memories if m.source == MemorySource.GITHUB]
@@ -262,7 +262,7 @@ class TestSyncSupersedesOld:
 
         # Only the second memory should be active (non-superseded)
         memories_by_project, _ = initialized_store.recall(
-            project_id="supproj", depth=1
+            project_id="supproj"
         )
         memories = memories_by_project.get("supproj", [])
         github_memories = [m for m in memories if m.source == MemorySource.GITHUB]

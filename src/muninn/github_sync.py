@@ -242,7 +242,6 @@ def sync_github(
     new_memory = store.save_memory(
         project_id=project_id,
         content=summary,
-        depth=1,
         source=MemorySource.GITHUB,
         tags=["github", "sync"],
     )

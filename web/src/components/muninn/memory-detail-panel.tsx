@@ -9,8 +9,7 @@ import {
   deleteMemory,
 } from "@/lib/api";
 import type { Memory } from "@/lib/types";
-import { relativeTime, cn } from "@/lib/utils";
-import { DepthBadge } from "@/components/muninn/depth-badge";
+import { relativeTime } from "@/lib/utils";
 import { TagPill } from "@/components/muninn/tag-pill";
 import { MarkdownContent } from "@/components/muninn/markdown-content";
 import { SupersedeChain } from "@/components/muninn/supersede-chain";
@@ -45,7 +44,6 @@ export function MemoryDetailPanel({
 
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
-  const [editDepth, setEditDepth] = useState(0);
   const [editTags, setEditTags] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -74,7 +72,6 @@ export function MemoryDetailPanel({
   const startEdit = useCallback(() => {
     if (!memory) return;
     setEditContent(memory.content);
-    setEditDepth(memory.depth);
     setEditTags(memory.tags.join(", "));
     setEditing(true);
   }, [memory]);
@@ -93,7 +90,6 @@ export function MemoryDetailPanel({
         .filter(Boolean);
       await updateMemory(memory.id, {
         content: editContent,
-        depth: editDepth,
         tags,
       });
       toast({ title: "Memory updated", variant: "default" });
@@ -109,7 +105,7 @@ export function MemoryDetailPanel({
     } finally {
       setSaving(false);
     }
-  }, [memory, editContent, editDepth, editTags, toast, fetchData, onUpdated]);
+  }, [memory, editContent, editTags, toast, fetchData, onUpdated]);
 
   const handleDelete = useCallback(async () => {
     if (!memory) return;
@@ -235,28 +231,14 @@ export function MemoryDetailPanel({
           </div>
         </div>
 
-        {/* Depth + tags */}
-        <div className="mt-4 flex items-center gap-3">
-          {editing ? (
-            <select
-              value={editDepth}
-              onChange={(e) => setEditDepth(Number(e.target.value))}
-              className="rounded border border-border bg-card px-2 py-1 font-mono text-xs text-foreground"
-            >
-              <option value={0}>0 - summary</option>
-              <option value={1}>1 - context</option>
-              <option value={2}>2 - detailed</option>
-              <option value={3}>3 - full</option>
-            </select>
-          ) : (
-            <DepthBadge depth={memory.depth} />
-          )}
+        {/* Tags */}
+        <div className="mt-4">
           {editing ? (
             <input
               value={editTags}
               onChange={(e) => setEditTags(e.target.value)}
               placeholder="tag1, tag2, ..."
-              className="flex-1 rounded border border-border bg-card px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted"
+              className="w-full rounded border border-border bg-card px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted"
             />
           ) : (
             <div className="flex flex-wrap gap-1">
