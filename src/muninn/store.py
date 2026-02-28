@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from muninn.models import Memory, MemorySource, Project, ProjectStatus, validate_memory_content, validate_tags
+from muninn.models import Memory, MemorySource, Project, ProjectCategory, ProjectStatus, validate_memory_content, validate_tags
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -115,10 +115,12 @@ def _resolve_db_path(db_path: str | None) -> str:
 
 def _row_to_project(row: sqlite3.Row, *, memory_count: int = 0) -> Project:
     """Convert a sqlite3.Row from the projects table into a Project."""
+    keys = row.keys()
     return Project(
         id=row["id"],
         name=row["name"],
         status=row["status"],
+        category=row["category"] if "category" in keys else ProjectCategory.PROJECT,
         summary=row["summary"],
         github_repo=row["github_repo"],
         created_at=row["created_at"],
@@ -345,6 +347,18 @@ class MuninnStore:
             """)
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (6)")
 
+        # v7: add category column to projects (project / personal).
+        if current_version < 7:
+            proj_cols = {r[1] for r in conn.execute("PRAGMA table_info(projects)").fetchall()}
+            if "category" not in proj_cols:
+                try:
+                    conn.execute(
+                        "ALTER TABLE projects ADD COLUMN category TEXT DEFAULT 'project'"
+                    )
+                except Exception:
+                    pass
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (7)")
+
     # ------------------------------------------------------------------
     # Project operations
     # ------------------------------------------------------------------
@@ -355,18 +369,21 @@ class MuninnStore:
         name: str,
         summary: str | None = None,
         github_repo: str | None = None,
+        category: str = ProjectCategory.PROJECT,
     ) -> Project:
         """Insert a new project and return the created ``Project``."""
+        from muninn.models import validate_project_category
+        validate_project_category(category)
         now = _now_iso()
         conn = self._get_connection()
         try:
             with conn:
                 conn.execute(
                     """
-                    INSERT INTO projects (id, name, summary, github_repo, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO projects (id, name, summary, github_repo, category, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (id, name, summary, github_repo, now, now),
+                    (id, name, summary, github_repo, category, now, now),
                 )
         finally:
             conn.close()
@@ -374,6 +391,7 @@ class MuninnStore:
             id=id,
             name=name,
             status=ProjectStatus.ACTIVE,
+            category=category,
             summary=summary,
             github_repo=github_repo,
             created_at=now,
@@ -453,7 +471,7 @@ class MuninnStore:
         Returns the updated ``Project``.
         Raises ``ValueError`` if the project does not exist.
         """
-        allowed = {"name", "status", "summary", "github_repo"}
+        allowed = {"name", "status", "summary", "github_repo", "category"}
         unknown = set(kwargs.keys()) - allowed
         if unknown:
             raise ValueError(
@@ -465,6 +483,10 @@ class MuninnStore:
         if "status" in updates:
             from muninn.models import validate_project_status
             validate_project_status(str(updates["status"]))
+
+        if "category" in updates:
+            from muninn.models import validate_project_category
+            validate_project_category(str(updates["category"]))
 
         now = _now_iso()
         updates["updated_at"] = now

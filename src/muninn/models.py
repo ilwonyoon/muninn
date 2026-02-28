@@ -26,6 +26,21 @@ class ProjectStatus:
         return cls._valid
 
 
+class ProjectCategory:
+    PROJECT = "project"
+    PERSONAL = "personal"
+
+    _valid: frozenset[str] = frozenset({"project", "personal"})
+
+    @classmethod
+    def is_valid(cls, value: str) -> bool:
+        return value in cls._valid
+
+    @classmethod
+    def values(cls) -> frozenset[str]:
+        return cls._valid
+
+
 class MemorySource:
     CONVERSATION = "conversation"
     GITHUB = "github"
@@ -52,6 +67,15 @@ def validate_project_status(status: str) -> None:
         raise ValueError(
             f"Invalid project status {status!r}. "
             f"Must be one of: {sorted(ProjectStatus.values())}"
+        )
+
+
+def validate_project_category(category: str) -> None:
+    """Raise ValueError if *category* is not a valid ProjectCategory."""
+    if not ProjectCategory.is_valid(category):
+        raise ValueError(
+            f"Invalid project category {category!r}. "
+            f"Must be one of: {sorted(ProjectCategory.values())}"
         )
 
 
@@ -104,6 +128,7 @@ class Project:
     created_at: str
     updated_at: str
     status: str = ProjectStatus.ACTIVE
+    category: str = ProjectCategory.PROJECT
     summary: str | None = None
     github_repo: str | None = None
     # Not stored in DB — computed on read.
@@ -111,6 +136,7 @@ class Project:
 
     def __post_init__(self) -> None:
         validate_project_status(self.status)
+        validate_project_category(self.category)
 
 
 @dataclass(frozen=True)

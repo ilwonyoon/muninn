@@ -91,6 +91,7 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
             name=name,
             summary=body.get("summary"),
             github_repo=body.get("github_repo"),
+            category=body.get("category", "project"),
         )
         return JSONResponse(_project_to_dict(project), status_code=201)
 
@@ -103,7 +104,7 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
                 {"error": "Invalid JSON body", "code": "BAD_REQUEST"},
                 status_code=400,
             )
-        allowed = {"name", "status", "summary", "github_repo"}
+        allowed = {"name", "status", "summary", "github_repo", "category"}
         kwargs = {k: v for k, v in body.items() if k in allowed}
         if not kwargs:
             return JSONResponse(

@@ -301,7 +301,7 @@ def muninn_manage(
             return f"Error: memory '{memory_id}' not found or already deleted."
 
         if action == "update_project":
-            allowed_fields = {"summary", "github_repo", "name"}
+            allowed_fields = {"summary", "github_repo", "name", "category"}
             if field is None:
                 return "Error: 'field' parameter is required for update_project action."
             if field not in allowed_fields:

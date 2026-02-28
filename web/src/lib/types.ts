@@ -3,6 +3,7 @@ export interface Project {
   id: string;
   name: string;
   status: "active" | "paused" | "idea" | "archived";
+  category: "project" | "personal";
   summary: string | null;
   github_repo: string | null;
   created_at: string;
