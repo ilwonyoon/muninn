@@ -31,9 +31,7 @@ export default function InstructionsPage() {
     setSaveStatus("saving");
     setSaveError(null);
     try {
-      const data = await updateInstructions(content);
-      setContent(data.content);
-      setFilePath(data.path);
+      await updateInstructions(content);
       setSaveStatus("success");
       setTimeout(() => setSaveStatus("idle"), 3000);
     } catch (err: unknown) {

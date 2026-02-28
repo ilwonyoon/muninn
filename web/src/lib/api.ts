@@ -133,13 +133,14 @@ export function getStats(): Promise<DashboardStats> {
 
 // -- Instructions ------------------------------------------------------------
 
-export function getInstructions(): Promise<{ content: string; path: string }> {
-  return fetchJSON("/instructions");
+export async function getInstructions(): Promise<{ content: string; path: string }> {
+  const res = await fetchJSON<{ instructions: string; path: string }>("/instructions");
+  return { content: res.instructions, path: res.path };
 }
 
-export function updateInstructions(content: string): Promise<{ content: string; path: string }> {
+export function updateInstructions(content: string): Promise<{ ok: boolean }> {
   return fetchJSON("/instructions", {
     method: "PUT",
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ instructions: content }),
   });
 }
