@@ -1131,6 +1131,53 @@ class MuninnStore:
             for r in rows
         ]
 
+    def search_projects(self, query: str, limit: int = 20) -> list[Project]:
+        """Search project documents (summaries) by keyword.
+
+        Case-insensitive LIKE search on projects.summary.
+        Only returns projects that have a non-null summary.
+        """
+        conn = self._get_connection()
+        try:
+            rows = _rows_to_dicts(conn.execute(
+                """
+                SELECT p.*,
+                       (SELECT COUNT(*) FROM memories m
+                        WHERE m.project_id = p.id AND m.superseded_by IS NULL) AS memory_count
+                FROM projects p
+                WHERE p.summary IS NOT NULL
+                  AND LOWER(p.summary) LIKE LOWER(?)
+                ORDER BY p.updated_at DESC
+                LIMIT ?
+                """,
+                (f"%{query}%", limit),
+            ))
+        finally:
+            conn.close()
+        return [
+            _row_to_project(r, memory_count=r["memory_count"]) for r in rows
+        ]
+
+    def reset_data(self) -> None:
+        """Wipe all memories, tags, and revisions. Clear all project summaries.
+
+        Projects themselves are kept but their summaries are set to NULL.
+        """
+        now = _now_iso()
+        conn = self._get_connection()
+        try:
+            conn.execute("DELETE FROM memory_tags")
+            conn.execute("DELETE FROM memories")
+            conn.execute("DELETE FROM project_summary_revisions")
+            conn.execute(
+                "UPDATE projects SET summary = NULL, updated_at = ?",
+                (now,),
+            )
+            conn.commit()
+            self._sync(conn)
+        finally:
+            conn.close()
+
     def get_dashboard_stats(self) -> dict[str, int]:
         """Return aggregate statistics for the dashboard overview."""
         conn = self._get_connection()

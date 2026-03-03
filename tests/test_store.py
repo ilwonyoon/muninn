@@ -870,3 +870,121 @@ class TestUpdateProjectUnknownKwargs:
         store.create_project(id="typo-test", name="Typo Test")
         with pytest.raises(ValueError, match="Unknown"):
             store.update_project("typo-test", summry="oops")
+
+
+# ---------------------------------------------------------------------------
+# search_projects — keyword search on project summaries
+# ---------------------------------------------------------------------------
+
+class TestSearchProjects:
+    def test_search_finds_matching_project(self, store):
+        """search_projects returns projects whose summary matches the query."""
+        store.create_project(id="sp-1", name="SP1")
+        store.update_project("sp-1", summary="This project uses React and TypeScript")
+
+        results = store.search_projects("React")
+
+        assert len(results) == 1
+        assert results[0].id == "sp-1"
+
+    def test_search_case_insensitive(self, store):
+        """search_projects is case-insensitive."""
+        store.create_project(id="sp-ci", name="CI")
+        store.update_project("sp-ci", summary="Using POSTGRESQL for data storage")
+
+        results = store.search_projects("postgresql")
+
+        assert len(results) == 1
+        assert results[0].id == "sp-ci"
+
+    def test_search_excludes_null_summaries(self, store):
+        """search_projects does not return projects with null summaries."""
+        store.create_project(id="sp-null", name="Null")
+        # no summary set
+
+        results = store.search_projects("Null")
+
+        assert len(results) == 0
+
+    def test_search_no_matches(self, store):
+        """search_projects returns empty list when no matches."""
+        store.create_project(id="sp-none", name="None")
+        store.update_project("sp-none", summary="A simple todo app")
+
+        results = store.search_projects("xyzzy_no_match")
+
+        assert results == []
+
+    def test_search_multiple_matches(self, store):
+        """search_projects returns multiple matching projects."""
+        store.create_project(id="sp-a", name="A")
+        store.create_project(id="sp-b", name="B")
+        store.update_project("sp-a", summary="Building a dashboard with charts")
+        store.update_project("sp-b", summary="Dashboard analytics tool")
+
+        results = store.search_projects("dashboard")
+
+        assert len(results) == 2
+
+    def test_search_respects_limit(self, store):
+        """search_projects respects the limit parameter."""
+        for i in range(5):
+            store.create_project(id=f"sp-lim-{i}", name=f"Lim{i}")
+            store.update_project(f"sp-lim-{i}", summary=f"Project about widgets number {i}")
+
+        results = store.search_projects("widgets", limit=2)
+
+        assert len(results) <= 2
+
+
+# ---------------------------------------------------------------------------
+# reset_data — wipe memories, tags, revisions, clear summaries
+# ---------------------------------------------------------------------------
+
+class TestResetData:
+    def test_reset_clears_memories(self, store):
+        """reset_data removes all memories."""
+        store.create_project(id="reset-p", name="Reset")
+        store.save_memory(project_id="reset-p", content="Memory 1")
+        store.save_memory(project_id="reset-p", content="Memory 2")
+
+        store.reset_data()
+
+        project = store.get_project("reset-p")
+        assert project is not None
+        assert project.memory_count == 0
+
+    def test_reset_clears_summaries(self, store):
+        """reset_data sets all project summaries to NULL."""
+        store.create_project(id="reset-s", name="Reset Summary")
+        store.update_project("reset-s", summary="Some document")
+
+        store.reset_data()
+
+        project = store.get_project("reset-s")
+        assert project is not None
+        assert project.summary is None
+
+    def test_reset_preserves_projects(self, store):
+        """reset_data does not delete projects themselves."""
+        store.create_project(id="reset-keep", name="Keep Me")
+
+        store.reset_data()
+
+        project = store.get_project("reset-keep")
+        assert project is not None
+        assert project.id == "reset-keep"
+
+    def test_reset_clears_revisions(self, store):
+        """reset_data removes all summary revisions."""
+        store.create_project(id="reset-rev", name="Rev")
+        store.update_project("reset-rev", summary="V1")
+        store.update_project("reset-rev", summary="V2")
+
+        store.reset_data()
+
+        # After reset, saving a new summary should work without issues
+        store.update_project("reset-rev", summary="Fresh start")
+        project = store.get_project("reset-rev")
+        assert project is not None
+        assert project.summary == "Fresh start"

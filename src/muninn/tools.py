@@ -14,10 +14,10 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from muninn.formatter import (
+    format_document_recall,
+    format_document_saved,
+    format_document_search,
     format_manage_result,
-    format_recall,
-    format_save_confirmation,
-    format_search_results,
     format_status,
 )
 from muninn.models import Project, ProjectStatus, validate_project_status
@@ -76,136 +76,79 @@ def _log_usage(
 
 def muninn_save(
     project: str,
-    content: str,
-    tags: tuple[str, ...] | list[str] | None = None,
+    document: str,
 ) -> str:
-    """Save a distilled memory to a project. Auto-creates the project if it does not exist.
+    """Save or update the project document (one-pager).
 
-    TAGS — always set 1-3 tags per memory to enable later filtering:
-      Decisions:    ['decision', 'architecture'] or ['decision', 'api']
-      Bugs/issues:  ['bug', 'auth'] or ['bug', 'performance']
-      Pending work: ['todo', 'api'] or ['todo', 'testing']
-      Research:     ['research', 'benchmarks'] or ['research', 'ux']
-      Milestones:   ['milestone', 'shipped'] or ['milestone', 'v1']
-      Config/infra: ['config', 'infra'] or ['config', 'deploy']
+    Always pass the FULL document. If updating, recall first, merge new info,
+    then save. This replaces the entire project summary — partial updates will
+    lose existing content.
 
-    RULES:
-      - One topic per memory. Split unrelated facts into separate muninn_save calls.
-      - Prefer concrete over vague: 'Using hatchling' beats 'build system chosen'.
-      - Update stale memories via muninn_manage update_memory instead of adding duplicates.
+    Auto-creates the project if it does not exist.
     """
     _log_usage("muninn_save", project=project)
     try:
+        if not document or not document.strip():
+            return "Error: 'document' must not be empty or whitespace."
+
         store = _get_store()
 
-        # Auto-create project if it does not exist yet.
         existing = store.get_project(project)
         if existing is None:
             store.create_project(id=project, name=project.capitalize())
 
-        memory = store.save_memory(
-            project_id=project,
-            content=content,
-            tags=tags,
-        )
+        updated = store.update_project(project, summary=document)
 
-        # Re-fetch project so memory_count is up-to-date.
-        updated_project = store.get_project(project)
-        if updated_project is None:
-            return f"Error: project '{project}' disappeared after save."
-
-        return format_save_confirmation(memory, updated_project)
+        return format_document_saved(updated)
 
     except Exception as exc:
-        return f"Error saving memory: {exc}"
+        return f"Error saving document: {exc}"
 
 
 def muninn_recall(
     project: str | None = None,
-    max_chars: int = 8000,
-    tags: list[str] | None = None,
 ) -> str:
-    """Load project context from Muninn memory.
+    """Load the project document.
 
-    WHEN TO CALL:
-      - Session start: call immediately when the user mentions any project by name.
-        Do not wait to be asked — proactive recall prevents re-explaining context.
-      - Switching focus: call when the conversation shifts to a different project.
-      - After search: call after muninn_search to load full context for a found project.
-
-    If no project is specified, loads all active projects (useful at session start
-    when you don't yet know which project the user will work on).
-
-    max_chars caps total output to protect context window. Memories load
-    newest-first. If the budget is hit, older memories are dropped silently.
+    If no project is specified, loads all active project documents.
+    Call at session start when the user mentions a project, or when switching
+    focus to a different project. Do not wait to be asked — proactive recall
+    prevents re-explaining context.
     """
     _log_usage("muninn_recall", project=project)
     try:
         store = _get_store()
 
-        memories_by_project, recall_stats = store.recall(
-            project_id=project,
-            max_chars=max_chars,
-            tags=tags,
-        )
-
-        # Build the dict[str, tuple[Project, list[Memory]]] that
-        # format_recall expects.
-        projects_memories: dict[str, tuple[Project, list]] = {}
-        for project_id, memories in memories_by_project.items():
-            proj = store.get_project(project_id)
+        if project is not None:
+            proj = store.get_project(project)
             if proj is None:
-                continue
-            projects_memories[project_id] = (proj, memories)
+                return f"Error: project '{project}' not found."
+            projects = [proj]
+        else:
+            projects = store.list_projects(status="active")
 
-        return format_recall(projects_memories, stats=recall_stats)
+        return format_document_recall(projects)
 
     except Exception as exc:
-        return f"Error recalling memories: {exc}"
+        return f"Error recalling document: {exc}"
 
 
 def muninn_search(
     query: str,
-    project: str | None = None,
-    tags: list[str] | None = None,
-    limit: int = 50,
 ) -> str:
-    """Full-text search across project memories by keyword or phrase.
+    """Search across all project documents by keyword.
 
-    USE SEARCH WHEN:
-      - The user asks about a specific topic and you don't know which project it's in.
-      - You need to find a particular decision, bug, or fact by keyword.
-      - You want to check if something was already saved before saving a duplicate.
-      - The user asks "did we decide..." or "what did we say about...".
-
-    USE RECALL INSTEAD WHEN:
-      - You know the project name and want full session context — recall is faster.
-      - Session just started and you want everything for a project (use muninn_recall).
-
-    Narrows results with optional filters:
-      project  — limit to one project's memories
-      tags     — filter to memories with specific tags (e.g. ['decision', 'bug'])
-      limit    — max memories returned (default 50, lower for faster scans)
-
-    Results are ranked by FTS5 relevance. Inspect the project field on each result
-    to identify which project owns the memory, then call muninn_recall on that
-    project if you need full context.
+    Use when the user asks about a topic and you don't know which project it's
+    in, or to check if something was already documented before saving.
     """
-    _log_usage("muninn_search", project=project)
+    _log_usage("muninn_search")
     try:
         store = _get_store()
-
-        memories = store.search(
-            query=query,
-            project_id=project,
-            tags=tags,
-            limit=limit,
-        )
-
-        return format_search_results(memories, query)
+        projects = store.search_projects(query)
+        return format_document_search(projects, query)
 
     except Exception as exc:
-        return f"Error searching memories: {exc}"
+        return f"Error searching documents: {exc}"
 
 
 def muninn_status() -> str:
@@ -231,14 +174,12 @@ def muninn_status() -> str:
 
 
 def muninn_manage(
-    action: Literal["set_status", "delete_memory", "update_memory", "update_project", "create_project", "delete_project"],
+    action: Literal["set_status", "create_project", "delete_project"],
     project: str,
     status: str | None = None,
-    memory_id: str | None = None,
-    field: str | None = None,
     value: str | None = None,
 ) -> str:
-    """Manage projects and memories: update, delete, or change status.
+    """Manage projects: change status, create, or delete.
 
     ACTIONS:
 
@@ -247,33 +188,14 @@ def muninn_manage(
       Use 'paused' for projects on hold, 'archived' for completed/abandoned.
       Example: action="set_status", project="muninn", status="paused"
 
-    delete_memory — Permanently remove a single memory by ID.
-      Required: memory_id (full UUID from recall/search output)
-      Use when a memory is stale, wrong, or superseded and update won't help.
-      Example: action="delete_memory", project="muninn", memory_id="abc123..."
-
-    update_memory — Edit an existing memory in place.
-      Required: memory_id
-      Optional: field = content | tags
-        field="content", value="new text"           — rewrite the memory
-        field="tags", value="decision,architecture" — replace all tags (comma-separated)
-      Prefer this over delete + re-save to preserve memory history.
-      Example: action="update_memory", project="muninn", memory_id="abc123...",
-               field="content", value="Auth: switched to API key only. OAuth removed."
-
-    update_project — Edit project metadata.
-      Required: field = name | summary | github_repo
-      Required: value = new field value
-      Example: action="update_project", project="muninn", field="name", value="Muninn v2"
-
     create_project — Explicitly create a project with a display name.
       Optional: value = display name (defaults to project id if omitted)
       Note: muninn_save auto-creates projects, so only use this when you want
-      to set a specific display name upfront before saving any memories.
+      to set a specific display name upfront before saving a document.
       Example: action="create_project", project="myapp", value="My App"
 
-    delete_project — Permanently delete a project and ALL its memories.
-      This is irreversible. All memories, tags, and summary revisions are removed.
+    delete_project — Permanently delete a project and its document.
+      This is irreversible. The project and all associated data are removed.
       Example: action="delete_project", project="old-project"
     """
     _log_usage("muninn_manage", project=project)
@@ -293,59 +215,6 @@ def muninn_manage(
                 f"{updated.id} is now '{updated.status}'",
             )
 
-        if action == "delete_memory":
-            if memory_id is None:
-                return "Error: 'memory_id' parameter is required for delete_memory action."
-            deleted = store.delete_memory(memory_id)
-            if deleted:
-                return format_manage_result(
-                    "Memory deleted",
-                    f"memory {memory_id[:8]} removed from {project}",
-                )
-            return f"Error: memory '{memory_id}' not found or already deleted."
-
-        if action == "update_project":
-            allowed_fields = {"summary", "github_repo", "name", "category"}
-            if field is None:
-                return "Error: 'field' parameter is required for update_project action."
-            if field not in allowed_fields:
-                return (
-                    f"Error: invalid field '{field}'. "
-                    f"Must be one of: {sorted(allowed_fields)}"
-                )
-            if value is None:
-                return "Error: 'value' parameter is required for update_project action."
-            updated = store.update_project(project, **{field: value})
-            return format_manage_result(
-                "Project updated",
-                f"{updated.id}.{field} = {value!r}",
-            )
-
-        if action == "update_memory":
-            if memory_id is None:
-                return "Error: 'memory_id' parameter is required for update_memory action."
-
-            update_kwargs: dict[str, object] = {}
-            if field == "content" and value is not None:
-                update_kwargs["content"] = value
-            elif field == "tags" and value is not None:
-                update_kwargs["tags"] = [t.strip() for t in value.split(",") if t.strip()]
-            elif field is not None:
-                return f"Error: invalid field '{field}' for update_memory. Must be one of: content, tags."
-            elif value is not None:
-                # No field specified but value given — default to content update
-                update_kwargs["content"] = value
-            else:
-                return "Error: 'value' parameter is required for update_memory action."
-
-            updated = store.update_memory(memory_id, **update_kwargs)
-            if updated is None:
-                return f"Error: memory '{memory_id}' not found or already superseded."
-            return format_manage_result(
-                "Memory updated",
-                f"memory {memory_id[:8]} in {project}",
-            )
-
         if action == "create_project":
             existing = store.get_project(project)
             if existing is not None:
@@ -362,11 +231,14 @@ def muninn_manage(
             if deleted:
                 return format_manage_result(
                     "Project deleted",
-                    f"{project} and all its memories have been permanently removed",
+                    f"{project} and its document have been permanently removed",
                 )
             return f"Error: project '{project}' not found."
 
-        return f"Error: unknown action '{action}'. Valid actions: set_status, delete_memory, update_memory, update_project, create_project, delete_project."
+        return (
+            f"Error: unknown action '{action}'. "
+            "Valid actions: set_status, create_project, delete_project."
+        )
 
     except Exception as exc:
         return f"Error in manage ({action}): {exc}"

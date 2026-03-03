@@ -39,52 +39,30 @@ from muninn.tools import (
 
 _INSTRUCTIONS = (
     "Muninn is a personal memory bridge across AI tools.\n"
-    "The user works on multiple projects (apps, tools, ideas) and switches\n"
-    "between Claude Code, Claude Desktop, ChatGPT, and Codex. Muninn keeps\n"
-    "context alive across all of them.\n"
+    "\n"
+    "## Core Concept: Project Documents\n"
+    "Each project has a DOCUMENT — a markdown one-pager that captures what\n"
+    "the project IS, key decisions, current direction, and open questions.\n"
     "\n"
     "## How to use\n"
-    "1. When the user mentions a project by name, call muninn_recall first.\n"
-    "2. When important conclusions emerge, save them immediately.\n"
-    "3. At the end of a meaningful session, update the project document (one-pager).\n"
+    "1. When user mentions a project, call muninn_recall first.\n"
+    "2. At session end, update the document:\n"
+    '   - muninn_recall(project="xxx") to load current document\n'
+    "   - Merge new info from this session\n"
+    '   - muninn_save(project="xxx", document="<full markdown one-pager>")\n'
+    "3. Organize by LOGIC, not chronology.\n"
     "\n"
-    "## What to save\n"
-    "Save the user's THINKING, not the technical output:\n"
-    "- Decisions made and why: '계층 구조 제거. 단순할수록 좋다는 결론.'\n"
-    "- Direction changes: '처음엔 React Native였는데 Swift로 전환. 퍼포먼스 이유.'\n"
-    "- Current status: '로그인까지 구현됨. 다음은 결제 연동.'\n"
-    "- Open questions: 'DB를 Supabase로 갈지 SQLite로 갈지 미정.'\n"
-    "- Feature descriptions (user perspective): '사용자가 포커스 시간을 설정하면 앱이 방해 알림을 차단해줌'\n"
+    "## What goes in the document\n"
+    "- What this project IS (user/product perspective)\n"
+    "- Key decisions and why\n"
+    "- Direction changes and reasoning\n"
+    "- Current status and what's next\n"
+    "- Open questions\n"
     "\n"
     "## What NOT to save\n"
-    "- Code changes, function names, test results (git handles this)\n"
+    "- Code changes, function names, test results\n"
+    "- Implementation details\n"
     "- Raw conversation logs\n"
-    "- Implementation details like 'added WAL mode to SQLite'\n"
-    "\n"
-    "## Save format\n"
-    "- One topic per memory. Split unrelated facts into separate saves.\n"
-    "- Use 1-3 tags: ['decision', 'direction'], ['feature', 'payment'], ['idea'].\n"
-    "- Update stale memories with muninn_manage update_memory, don't duplicate.\n"
-    "\n"
-    "## Project document (one-pager)\n"
-    "Muninn has two layers: atomic memories (for AI) and a one-pager document (for humans).\n"
-    "After meaningful sessions, update the project document:\n"
-    '  1. muninn_recall(project="xxx") to load all memories\n'
-    "  2. Reorganize by LOGIC (not chronology) into a markdown one-pager.\n"
-    "     No fixed template — let the discussed topics shape the structure.\n"
-    "     Use headers, tables, and lists for readability.\n"
-    '  3. muninn_manage(action="update_project", project="xxx",\n'
-    '     field="summary", value="<full markdown one-pager>")\n'
-    "\n"
-    "The document should capture decisions, direction, and key discussions —\n"
-    "what THIS PROJECT is and where it's going. Not how it's built.\n"
-    "If a document already exists, update it to reflect new discussions.\n"
-    "Changed sections will be highlighted in the dashboard for user review.\n"
-    "\n"
-    "## Project types the user works on\n"
-    "- Active side projects (apps, developer tools)\n"
-    "- Past work / portfolio projects\n"
-    "- Personal interests and ideas being explored\n"
     "\n"
     "## Project status values\n"
     "- active: currently working on\n"
@@ -137,6 +115,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--public-url",
         default=None,
         help="Public URL for OAuth issuer (e.g. https://muninn.ilwonyoon.com)",
+    )
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Wipe all memories, tags, revisions and clear project summaries, then exit.",
     )
     return parser
 
@@ -285,6 +268,16 @@ def main() -> None:
     args = parser.parse_args()
 
     store = MuninnStore()
+
+    if args.reset:
+        store.reset_data()
+        # Delete the instructions file so a fresh default is written next start.
+        inst_path = _instructions_path()
+        if inst_path.exists():
+            inst_path.unlink()
+        print("Reset complete. All memories, tags, revisions wiped. Summaries cleared.", file=sys.stderr)
+        return
+
     init_store(store)
 
     mcp = _create_mcp(

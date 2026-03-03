@@ -47,7 +47,6 @@ def initialized_store(store):
 class TestGetStore:
     def test_raises_when_not_initialized(self):
         """_get_store raises RuntimeError before init_store is called."""
-        # reset_store autouse fixture ensures _store is None here
         with pytest.raises(RuntimeError, match="not initialized"):
             _get_store()
 
@@ -58,135 +57,154 @@ class TestGetStore:
 
 
 # ---------------------------------------------------------------------------
-# muninn_save
+# muninn_save — document saving
 # ---------------------------------------------------------------------------
 
 
 class TestMuninnSave:
-    def test_save_to_existing_project(self, initialized_store):
-        """Save to an existing project returns confirmation with checkmark."""
+    def test_save_document_to_existing_project(self, initialized_store):
+        """Save a document to an existing project returns confirmation."""
         initialized_store.create_project(id="myproject", name="My Project")
-        result = muninn_save(project="myproject", content="Decision made")
-        assert "✅" in result
+        result = muninn_save(project="myproject", document="# My Project\n\nA cool app.")
+        assert "Saved" in result
+        assert "myproject" in result
 
     def test_save_auto_creates_project(self, initialized_store):
-        """Save to a non-existing project auto-creates it and returns confirmation."""
-        result = muninn_save(project="newproject", content="Some content")
-        assert "✅" in result
-        # Project was actually created
+        """Save to a non-existing project auto-creates it."""
+        result = muninn_save(project="newproject", document="# New\n\nBrand new project.")
+        assert "Saved" in result
         project = initialized_store.get_project("newproject")
         assert project is not None
+        assert project.summary == "# New\n\nBrand new project."
 
-    def test_save_with_tags_shows_tags(self, initialized_store):
-        """Save with tags — tags appear in the confirmation output."""
-        initialized_store.create_project(id="tagged-proj", name="Tagged")
-        result = muninn_save(
-            project="tagged-proj",
-            content="Tagged memory",
-            tags=["backend", "auth"],
-        )
-        assert "backend" in result or "auth" in result
+    def test_save_updates_summary(self, initialized_store):
+        """Save replaces the entire project summary."""
+        initialized_store.create_project(id="upd", name="Updatable")
+        muninn_save(project="upd", document="Version 1")
+        muninn_save(project="upd", document="Version 2")
+        project = initialized_store.get_project("upd")
+        assert project is not None
+        assert project.summary == "Version 2"
 
+    def test_save_empty_document_returns_error(self, initialized_store):
+        """Saving empty document returns error."""
+        result = muninn_save(project="val-proj", document="")
+        assert "Error" in result
+
+    def test_save_whitespace_document_returns_error(self, initialized_store):
+        """Saving whitespace-only document returns error."""
+        result = muninn_save(project="val-proj", document="   \n  ")
+        assert "Error" in result
+
+    def test_save_shows_char_count(self, initialized_store):
+        """Save confirmation includes character count."""
+        initialized_store.create_project(id="chars", name="Chars")
+        result = muninn_save(project="chars", document="Hello world")
+        assert "11" in result  # len("Hello world") == 11
 
 
 # ---------------------------------------------------------------------------
-# muninn_recall
+# muninn_recall — document loading
 # ---------------------------------------------------------------------------
 
 
 class TestMuninnRecall:
-    def test_recall_no_memories_returns_not_found(self, initialized_store):
-        """Recall with no memories stored returns 'No memories found.'"""
+    def test_recall_no_projects_returns_not_found(self, initialized_store):
+        """Recall with no projects returns 'No projects found.'"""
         result = muninn_recall()
-        assert "No memories found." in result
+        assert "No projects found." in result
 
-    def test_recall_specific_project(self, initialized_store):
-        """Recall a specific project returns its header and memories."""
+    def test_recall_specific_project_with_document(self, initialized_store):
+        """Recall a specific project returns its document."""
         initialized_store.create_project(id="alpha", name="Alpha")
-        initialized_store.save_memory(project_id="alpha", content="Alpha decision")
+        initialized_store.update_project("alpha", summary="# Alpha\n\nAlpha project doc.")
 
         result = muninn_recall(project="alpha")
 
         assert "alpha" in result
-        assert "Alpha decision" in result
+        assert "Alpha project doc." in result
 
-    def test_recall_shows_memory_ids(self, initialized_store):
-        """Recall output includes short memory IDs for use with delete/update."""
-        initialized_store.create_project(id="idtest", name="ID Test")
-        mem = initialized_store.save_memory(project_id="idtest", content="ID visible memory")
+    def test_recall_specific_project_no_document(self, initialized_store):
+        """Recall a project with no document shows 'No document yet.'"""
+        initialized_store.create_project(id="empty", name="Empty")
 
-        result = muninn_recall(project="idtest")
+        result = muninn_recall(project="empty")
 
-        short_id = mem.id[:8]
-        assert short_id in result
+        assert "No document yet." in result
 
     def test_recall_all_active_projects(self, initialized_store):
-        """Recall with project=None returns memories from all active projects."""
+        """Recall with project=None returns all active project documents."""
         initialized_store.create_project(id="proj-a", name="A")
         initialized_store.create_project(id="proj-b", name="B")
-        initialized_store.save_memory(project_id="proj-a", content="Memory A")
-        initialized_store.save_memory(project_id="proj-b", content="Memory B")
+        initialized_store.update_project("proj-a", summary="Doc A")
+        initialized_store.update_project("proj-b", summary="Doc B")
 
         result = muninn_recall(project=None)
 
         assert "proj-a" in result
         assert "proj-b" in result
 
+    def test_recall_excludes_paused(self, initialized_store):
+        """Recall with no project excludes paused projects."""
+        initialized_store.create_project(id="active-p", name="Active")
+        initialized_store.create_project(id="paused-p", name="Paused")
+        initialized_store.update_project("active-p", summary="Active doc")
+        initialized_store.update_project("paused-p", status="paused", summary="Paused doc")
+
+        result = muninn_recall(project=None)
+
+        assert "active-p" in result
+        assert "paused-p" not in result
+
+    def test_recall_nonexistent_project_returns_error(self, initialized_store):
+        """Recall a non-existent project returns error."""
+        result = muninn_recall(project="no-such-project")
+        assert "Error" in result
+        assert "not found" in result
+
 
 # ---------------------------------------------------------------------------
-# muninn_search
+# muninn_search — document search
 # ---------------------------------------------------------------------------
 
 
 class TestMuninnSearch:
     def test_search_no_results(self, initialized_store):
-        """Search that matches nothing returns 'No results found.'"""
+        """Search that matches nothing returns 'No projects found matching'."""
         initialized_store.create_project(id="s-proj", name="Search Proj")
-        initialized_store.save_memory(project_id="s-proj", content="Hello world")
+        initialized_store.update_project("s-proj", summary="Hello world")
 
         result = muninn_search(query="xyzzy_nomatch_zork")
 
-        assert "No results found." in result
+        assert "No projects found matching" in result
 
     def test_search_with_results(self, initialized_store):
-        """Search that matches returns formatted results including the query."""
+        """Search that matches returns project with snippet."""
         initialized_store.create_project(id="s-proj", name="Search Proj")
-        initialized_store.save_memory(project_id="s-proj", content="The quick brown fox")
+        initialized_store.update_project("s-proj", summary="The quick brown fox jumps over the lazy dog")
 
         result = muninn_search(query="fox")
 
         assert "fox" in result
-        assert "quick brown fox" in result
+        assert "s-proj" in result
 
-    def test_search_filtered_by_project(self, initialized_store):
-        """Search filtered by project only returns that project's memories."""
-        initialized_store.create_project(id="pa", name="PA")
-        initialized_store.create_project(id="pb", name="PB")
-        initialized_store.save_memory(project_id="pa", content="orange sunset")
-        initialized_store.save_memory(project_id="pb", content="orange sunrise")
+    def test_search_case_insensitive(self, initialized_store):
+        """Search is case-insensitive."""
+        initialized_store.create_project(id="case-proj", name="Case")
+        initialized_store.update_project("case-proj", summary="Important Decision Made")
 
-        result = muninn_search(query="orange", project="pa")
+        result = muninn_search(query="decision")
 
-        assert "pa" in result
-        assert "pb" not in result
+        assert "case-proj" in result
 
-    def test_search_filtered_by_tags(self, initialized_store):
-        """Search filtered by tags only returns tagged memories."""
-        initialized_store.create_project(id="tag-proj", name="Tag Proj")
-        initialized_store.save_memory(
-            project_id="tag-proj",
-            content="critical event alpha",
-            tags=["critical"],
-        )
-        initialized_store.save_memory(
-            project_id="tag-proj",
-            content="normal event alpha",
-        )
+    def test_search_skips_null_summaries(self, initialized_store):
+        """Search does not return projects with null summaries."""
+        initialized_store.create_project(id="no-doc", name="No Doc")
+        # no summary set
 
-        result = muninn_search(query="alpha", tags=["critical"])
+        result = muninn_search(query="No")
 
-        assert "critical event alpha" in result
-        assert "normal event alpha" not in result
+        assert "No projects found matching" in result
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +229,17 @@ class TestMuninnStatus:
         assert "alpha-p" in result
         assert "beta-p" in result
         assert "gamma-p" in result
+
+    def test_status_shows_document_status(self, initialized_store):
+        """Status shows 'has document' or 'no document' per project."""
+        initialized_store.create_project(id="with-doc", name="With")
+        initialized_store.create_project(id="no-doc", name="Without")
+        initialized_store.update_project("with-doc", summary="Some doc")
+
+        result = muninn_status()
+
+        assert "has document" in result
+        assert "no document" in result
 
 
 # ---------------------------------------------------------------------------
@@ -245,103 +274,6 @@ class TestMuninnManageSetStatus:
         assert "Error" in result
 
 
-class TestMuninnManageDeleteMemory:
-    def test_delete_memory_valid(self, initialized_store):
-        """delete_memory with a valid id returns 'Memory deleted'."""
-        initialized_store.create_project(id="dm-proj", name="DM")
-        memory = initialized_store.save_memory(project_id="dm-proj", content="To delete")
-
-        result = muninn_manage(
-            action="delete_memory",
-            project="dm-proj",
-            memory_id=memory.id,
-        )
-
-        assert "Memory deleted" in result
-
-    def test_delete_memory_missing_id(self, initialized_store):
-        """delete_memory without memory_id returns an error message."""
-        initialized_store.create_project(id="dm-proj2", name="DM2")
-
-        result = muninn_manage(action="delete_memory", project="dm-proj2")
-
-        assert "Error" in result
-        assert "memory_id" in result.lower()
-
-    def test_delete_memory_nonexistent_id(self, initialized_store):
-        """delete_memory with a non-existent id returns an error message."""
-        initialized_store.create_project(id="dm-proj3", name="DM3")
-
-        result = muninn_manage(
-            action="delete_memory",
-            project="dm-proj3",
-            memory_id="does-not-exist",
-        )
-
-        assert "Error" in result
-
-
-class TestMuninnManageUpdateMemory:
-    def test_update_memory_content(self, initialized_store):
-        """update_memory with content returns 'Memory updated'."""
-        initialized_store.create_project(id="um-proj", name="UM")
-        memory = initialized_store.save_memory(project_id="um-proj", content="Old text")
-        result = muninn_manage(
-            action="update_memory",
-            project="um-proj",
-            memory_id=memory.id,
-            field="content",
-            value="New text",
-        )
-        assert "Memory updated" in result
-
-    def test_update_memory_missing_id(self, initialized_store):
-        """update_memory without memory_id returns error."""
-        initialized_store.create_project(id="um-proj2", name="UM2")
-        result = muninn_manage(action="update_memory", project="um-proj2", value="x")
-        assert "Error" in result
-        assert "memory_id" in result.lower()
-
-    def test_update_memory_nonexistent(self, initialized_store):
-        """update_memory with non-existent id returns error."""
-        initialized_store.create_project(id="um-proj3", name="UM3")
-        result = muninn_manage(
-            action="update_memory",
-            project="um-proj3",
-            memory_id="does-not-exist",
-            value="New content",
-        )
-        assert "Error" in result
-
-
-class TestMuninnManageUpdateProject:
-    def test_update_project_valid_field(self, initialized_store):
-        """update_project with a valid field returns 'Project updated'."""
-        initialized_store.create_project(id="up-proj", name="Original")
-
-        result = muninn_manage(
-            action="update_project",
-            project="up-proj",
-            field="name",
-            value="Updated Name",
-        )
-
-        assert "Project updated" in result
-
-    def test_update_project_invalid_field(self, initialized_store):
-        """update_project with an invalid field returns an error message."""
-        initialized_store.create_project(id="up-proj2", name="Original2")
-
-        result = muninn_manage(
-            action="update_project",
-            project="up-proj2",
-            field="nonexistent_field",
-            value="some value",
-        )
-
-        assert "Error" in result
-
-
 class TestMuninnManageCreateProject:
     def test_create_project(self, initialized_store):
         """create_project action returns 'Project created'."""
@@ -355,138 +287,8 @@ class TestMuninnManageCreateProject:
         project = initialized_store.get_project("brand-new")
         assert project is not None
 
-
-class TestMuninnManageUnknownAction:
-    def test_unknown_action_returns_error(self, initialized_store):
-        """Unknown action returns an error message."""
-        result = muninn_manage(action="teleport", project="any-proj")
-
-        assert "Error" in result
-        assert "teleport" in result
-
-
-# ---------------------------------------------------------------------------
-# Edge cases: Content validation via tools
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Save confirmation hints
-# ---------------------------------------------------------------------------
-
-
-class TestSaveConfirmationHints:
-    def test_hint_when_summary_empty(self, initialized_store):
-        """Save to a project with no summary includes ⚠️ hint with call example."""
-        initialized_store.create_project(id="no-summary", name="No Summary")
-        result = muninn_save(project="no-summary", content="First memory")
-        assert "IMMEDIATE ACTION REQUIRED" in result
-        assert "one-pager" in result
-        assert "muninn_recall" in result
-        assert 'muninn_manage(action="update_project"' in result
-
-    def test_no_hint_when_summary_present(self, initialized_store):
-        """Save to a project with a summary does not include ⚠️ hint."""
-        initialized_store.create_project(id="has-summary", name="Has Summary")
-        initialized_store.update_project("has-summary", summary="A cool project.")
-        result = muninn_save(project="has-summary", content="Second memory")
-        assert "⚠️" not in result
-
-    def test_reminder_at_five_memories(self, initialized_store):
-        """Save that brings memory_count to a multiple of 5 shows 💡 reminder."""
-        initialized_store.create_project(id="five-proj", name="Five")
-        initialized_store.update_project("five-proj", summary="Existing summary.")
-        for i in range(4):
-            initialized_store.save_memory(project_id="five-proj", content=f"mem {i}")
-        # 5th memory via tool
-        result = muninn_save(project="five-proj", content="fifth memory")
-        assert "💡" in result
-        assert "5 memories accumulated" in result
-        assert "one-pager may be outdated" in result
-
-    def test_no_reminder_at_non_multiple_of_five(self, initialized_store):
-        """Save that brings memory_count to 3 (not multiple of 5) has no 💡."""
-        initialized_store.create_project(id="three-proj", name="Three")
-        initialized_store.update_project("three-proj", summary="Has summary.")
-        for i in range(2):
-            initialized_store.save_memory(project_id="three-proj", content=f"mem {i}")
-        result = muninn_save(project="three-proj", content="third memory")
-        assert "💡" not in result
-        assert "⚠️" not in result
-
-
-class TestSaveContentValidation:
-    def test_save_empty_content_returns_error(self, initialized_store):
-        """Saving empty content via muninn_save returns an error message."""
-        result = muninn_save(project="val-proj", content="")
-        assert "Error" in result
-
-    def test_save_whitespace_content_returns_error(self, initialized_store):
-        """Saving whitespace-only content via muninn_save returns error."""
-        result = muninn_save(project="val-proj", content="   \n  ")
-        assert "Error" in result
-
-
-# ---------------------------------------------------------------------------
-# Edge cases: Search limit via tools
-# ---------------------------------------------------------------------------
-
-
-class TestSearchLimit:
-    def test_search_with_custom_limit(self, initialized_store):
-        """muninn_search respects the limit parameter."""
-        initialized_store.create_project(id="lim-proj", name="Limit")
-        for i in range(20):
-            initialized_store.save_memory(
-                project_id="lim-proj", content=f"limitquery item {i}"
-            )
-
-        result = muninn_search(query="limitquery", limit=3)
-        # The result should contain "3 results found" or fewer
-        assert "3 result" in result or "2 result" in result or "1 result" in result
-
-
-# ---------------------------------------------------------------------------
-# Edge cases: Update memory via manage with empty content
-# ---------------------------------------------------------------------------
-
-
-class TestManageUpdateMemoryValidation:
-    def test_update_memory_empty_content_returns_error(self, initialized_store):
-        """update_memory with empty content via muninn_manage returns error."""
-        initialized_store.create_project(id="um-val", name="UM Val")
-        mem = initialized_store.save_memory(project_id="um-val", content="Original")
-        result = muninn_manage(
-            action="update_memory",
-            project="um-val",
-            memory_id=mem.id,
-            field="content",
-            value="",
-        )
-        assert "Error" in result
-
-    def test_update_memory_whitespace_content_returns_error(self, initialized_store):
-        """update_memory with whitespace content returns error."""
-        initialized_store.create_project(id="um-val2", name="UM Val2")
-        mem = initialized_store.save_memory(project_id="um-val2", content="Original")
-        result = muninn_manage(
-            action="update_memory",
-            project="um-val2",
-            memory_id=mem.id,
-            field="content",
-            value="   ",
-        )
-        assert "Error" in result
-
-
-# ---------------------------------------------------------------------------
-# Edge cases: Duplicate project via manage
-# ---------------------------------------------------------------------------
-
-
-class TestManageCreateDuplicateProject:
     def test_create_duplicate_project_returns_error(self, initialized_store):
-        """create_project with existing ID returns error, not crash."""
+        """create_project with existing ID returns error."""
         initialized_store.create_project(id="dup-proj", name="First")
         result = muninn_manage(
             action="create_project",
@@ -497,22 +299,28 @@ class TestManageCreateDuplicateProject:
         assert "already exists" in result
 
 
-# ---------------------------------------------------------------------------
-# Edge cases: Update project with unknown kwargs via manage
-# ---------------------------------------------------------------------------
+class TestMuninnManageDeleteProject:
+    def test_delete_project(self, initialized_store):
+        """delete_project action returns 'Project deleted'."""
+        initialized_store.create_project(id="del-proj", name="To Delete")
+        result = muninn_manage(action="delete_project", project="del-proj")
 
+        assert "Project deleted" in result
+        assert initialized_store.get_project("del-proj") is None
 
-class TestManageUpdateProjectUnknownField:
-    def test_update_project_unknown_field_returns_error(self, initialized_store):
-        """update_project with an invalid field returns a clear error."""
-        initialized_store.create_project(id="unk-proj", name="Unknown Field")
-        result = muninn_manage(
-            action="update_project",
-            project="unk-proj",
-            field="nonexistent",
-            value="something",
-        )
+    def test_delete_nonexistent_project_returns_error(self, initialized_store):
+        """delete_project for non-existent project returns error."""
+        result = muninn_manage(action="delete_project", project="no-such")
         assert "Error" in result
+
+
+class TestMuninnManageUnknownAction:
+    def test_unknown_action_returns_error(self, initialized_store):
+        """Unknown action returns an error message."""
+        result = muninn_manage(action="teleport", project="any-proj")
+
+        assert "Error" in result
+        assert "teleport" in result
 
 
 # ---------------------------------------------------------------------------
@@ -525,7 +333,7 @@ class TestUsageLogging:
         """Calling a tool appends a valid JSON entry to usage.jsonl."""
         monkeypatch.setenv("MUNINN_DATA_DIR", str(tmp_path))
 
-        muninn_save(project="log-test", content="Logging check")
+        muninn_save(project="log-test", document="Logging check doc")
 
         log_path = tmp_path / "usage.jsonl"
         assert log_path.exists(), "usage.jsonl was not created"
@@ -537,7 +345,6 @@ class TestUsageLogging:
         assert entry["tool"] == "muninn_save"
         assert entry["project"] == "log-test"
         assert "ts" in entry
-        # ts must be a valid ISO 8601 string
         from datetime import datetime
         datetime.fromisoformat(entry["ts"])  # raises if invalid
 
