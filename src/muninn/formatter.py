@@ -244,15 +244,20 @@ def _summary_hint(project: Project) -> str | None:
     """
     if not project.summary:
         return (
-            "⚠️ Project summary is empty. Please update it now:\n"
-            f'  muninn_manage(action="update_project", project="{project.id}",\n'
-            '  field="summary", value="<1-3 sentence product description>")'
+            "⚠️ Project document is empty. This is the main human-readable document for this project.\n"
+            "Action required:\n"
+            f'  1. muninn_recall(project="{project.id}") to load all memories\n'
+            "  2. Synthesize memories into a comprehensive markdown document\n"
+            "     (problem, positioning, core loop, architecture, key decisions, status)\n"
+            f'  3. muninn_manage(action="update_project", project="{project.id}",\n'
+            '     field="summary", value="<full markdown document>")'
         )
 
     if project.memory_count > 0 and project.memory_count % 5 == 0:
         return (
-            f"💡 {project.memory_count} memories accumulated. "
-            "Consider updating the project summary to reflect recent changes."
+            f"💡 {project.memory_count} memories accumulated since last document update.\n"
+            f"The project document may be outdated. Recall memories for {project.id},\n"
+            "then update the document to reflect the latest state."
         )
 
     return None

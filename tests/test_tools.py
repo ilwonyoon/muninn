@@ -380,7 +380,8 @@ class TestSaveConfirmationHints:
         """Save to a project with no summary includes ⚠️ hint with call example."""
         initialized_store.create_project(id="no-summary", name="No Summary")
         result = muninn_save(project="no-summary", content="First memory")
-        assert "⚠️ Project summary is empty" in result
+        assert "⚠️ Project document is empty" in result
+        assert "muninn_recall" in result
         assert 'muninn_manage(action="update_project"' in result
 
     def test_no_hint_when_summary_present(self, initialized_store):
@@ -400,6 +401,7 @@ class TestSaveConfirmationHints:
         result = muninn_save(project="five-proj", content="fifth memory")
         assert "💡" in result
         assert "5 memories accumulated" in result
+        assert "document may be outdated" in result
 
     def test_no_reminder_at_non_multiple_of_five(self, initialized_store):
         """Save that brings memory_count to 3 (not multiple of 5) has no 💡."""
