@@ -244,20 +244,20 @@ def _summary_hint(project: Project) -> str | None:
     """
     if not project.summary:
         return (
-            "⚠️ Project document is empty. This is the main human-readable document for this project.\n"
+            "⚠️ Project document is empty — this is the human-readable one-pager for this project.\n"
             "Action required:\n"
             f'  1. muninn_recall(project="{project.id}") to load all memories\n'
-            "  2. Synthesize memories into a comprehensive markdown document\n"
-            "     (problem, positioning, core loop, architecture, key decisions, status)\n"
+            "  2. Reorganize them by LOGIC (not chronology) into a markdown one-pager.\n"
+            "     No fixed template — let the discussed topics shape the structure.\n"
+            "     Use headers, tables, and lists for readability.\n"
             f'  3. muninn_manage(action="update_project", project="{project.id}",\n'
-            '     field="summary", value="<full markdown document>")'
+            '     field="summary", value="<full markdown one-pager>")'
         )
 
     if project.memory_count > 0 and project.memory_count % 5 == 0:
         return (
-            f"💡 {project.memory_count} memories accumulated since last document update.\n"
-            f"The project document may be outdated. Recall memories for {project.id},\n"
-            "then update the document to reflect the latest state."
+            f"💡 {project.memory_count} memories accumulated. The project one-pager may be outdated.\n"
+            f"Recall memories for {project.id}, then update the document to reflect recent discussions."
         )
 
     return None
