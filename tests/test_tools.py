@@ -380,7 +380,7 @@ class TestSaveConfirmationHints:
         """Save to a project with no summary includes ⚠️ hint with call example."""
         initialized_store.create_project(id="no-summary", name="No Summary")
         result = muninn_save(project="no-summary", content="First memory")
-        assert "⚠️ Project document is empty" in result
+        assert "IMMEDIATE ACTION REQUIRED" in result
         assert "one-pager" in result
         assert "muninn_recall" in result
         assert 'muninn_manage(action="update_project"' in result
