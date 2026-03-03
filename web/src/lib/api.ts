@@ -16,9 +16,11 @@ import type {
 const BASE = "/api";
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
+  const apiKey = process.env.NEXT_PUBLIC_MUNINN_API_KEY;
   const res = await fetch(`${BASE}${path}`, {
     headers: {
       "Content-Type": "application/json",
+      ...(apiKey ? { "x-api-key": apiKey } : {}),
       ...init?.headers,
     },
     ...init,
