@@ -247,12 +247,19 @@ class MuninnStore:
         Otherwise, opens a plain local SQLite connection via libsql.
         """
         if self._turso_url and self._turso_token:
-            conn = libsql.connect(
-                self._db_path,
-                sync_url=self._turso_url,
-                auth_token=self._turso_token,
-            )
-            conn.sync()
+            try:
+                conn = libsql.connect(
+                    self._db_path,
+                    sync_url=self._turso_url,
+                    auth_token=self._turso_token,
+                )
+                conn.sync()
+            except Exception as exc:
+                import logging
+                logging.getLogger("muninn").warning(
+                    "Turso sync failed, falling back to local-only: %s", exc
+                )
+                conn = libsql.connect(self._db_path)
         else:
             conn = libsql.connect(self._db_path)
 
@@ -262,7 +269,11 @@ class MuninnStore:
     def _sync(self, conn: Any) -> None:
         """Sync embedded replica if in Turso mode (no-op for local)."""
         if self._turso_url and self._turso_token:
-            conn.sync()
+            try:
+                conn.sync()
+            except Exception as exc:
+                import logging
+                logging.getLogger("muninn").warning("Turso sync failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Migrations
