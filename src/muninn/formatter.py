@@ -229,7 +229,33 @@ def format_save_confirmation(memory: Memory, project: Project) -> str:
     tags_display = ", ".join(memory.tags) if memory.tags else "none"
     short_id = memory.id[:8] if len(memory.id) >= 8 else memory.id
 
-    return f"✅ Saved to {project.id} (memory: {short_id})\nTags: {tags_display} | Project memories: {project.memory_count}"
+    base = f"✅ Saved to {project.id} (memory: {short_id})\nTags: {tags_display} | Project memories: {project.memory_count}"
+
+    hint = _summary_hint(project)
+    if hint:
+        return f"{base}\n\n{hint}"
+    return base
+
+
+def _summary_hint(project: Project) -> str | None:
+    """Return a conditional hint nudging the LLM to update the project summary.
+
+    Returns None when no hint is needed.
+    """
+    if not project.summary:
+        return (
+            "⚠️ Project summary is empty. Please update it now:\n"
+            f'  muninn_manage(action="update_project", project="{project.id}",\n'
+            '  field="summary", value="<1-3 sentence product description>")'
+        )
+
+    if project.memory_count > 0 and project.memory_count % 5 == 0:
+        return (
+            f"💡 {project.memory_count} memories accumulated. "
+            "Consider updating the project summary to reflect recent changes."
+        )
+
+    return None
 
 
 def format_manage_result(action: str, details: str) -> str:

@@ -370,6 +370,48 @@ class TestMuninnManageUnknownAction:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Save confirmation hints
+# ---------------------------------------------------------------------------
+
+
+class TestSaveConfirmationHints:
+    def test_hint_when_summary_empty(self, initialized_store):
+        """Save to a project with no summary includes ⚠️ hint with call example."""
+        initialized_store.create_project(id="no-summary", name="No Summary")
+        result = muninn_save(project="no-summary", content="First memory")
+        assert "⚠️ Project summary is empty" in result
+        assert 'muninn_manage(action="update_project"' in result
+
+    def test_no_hint_when_summary_present(self, initialized_store):
+        """Save to a project with a summary does not include ⚠️ hint."""
+        initialized_store.create_project(id="has-summary", name="Has Summary")
+        initialized_store.update_project("has-summary", summary="A cool project.")
+        result = muninn_save(project="has-summary", content="Second memory")
+        assert "⚠️" not in result
+
+    def test_reminder_at_five_memories(self, initialized_store):
+        """Save that brings memory_count to a multiple of 5 shows 💡 reminder."""
+        initialized_store.create_project(id="five-proj", name="Five")
+        initialized_store.update_project("five-proj", summary="Existing summary.")
+        for i in range(4):
+            initialized_store.save_memory(project_id="five-proj", content=f"mem {i}")
+        # 5th memory via tool
+        result = muninn_save(project="five-proj", content="fifth memory")
+        assert "💡" in result
+        assert "5 memories accumulated" in result
+
+    def test_no_reminder_at_non_multiple_of_five(self, initialized_store):
+        """Save that brings memory_count to 3 (not multiple of 5) has no 💡."""
+        initialized_store.create_project(id="three-proj", name="Three")
+        initialized_store.update_project("three-proj", summary="Has summary.")
+        for i in range(2):
+            initialized_store.save_memory(project_id="three-proj", content=f"mem {i}")
+        result = muninn_save(project="three-proj", content="third memory")
+        assert "💡" not in result
+        assert "⚠️" not in result
+
+
 class TestSaveContentValidation:
     def test_save_empty_content_returns_error(self, initialized_store):
         """Saving empty content via muninn_save returns an error message."""
