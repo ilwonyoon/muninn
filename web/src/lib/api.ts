@@ -131,6 +131,22 @@ export function getStats(): Promise<DashboardStats> {
   return fetchJSON("/stats");
 }
 
+// -- Summary Revisions -------------------------------------------------------
+
+export function getSummaryRevision(
+  projectId: string
+): Promise<{ previous_summary: string; updated_at: string } | null> {
+  return fetchJSON(`/projects/${projectId}/summary-revision`);
+}
+
+export function acknowledgeSummaryRevision(
+  projectId: string
+): Promise<{ ok: boolean }> {
+  return fetchJSON(`/projects/${projectId}/summary-revision/acknowledge`, {
+    method: "POST",
+  });
+}
+
 // -- Instructions ------------------------------------------------------------
 
 export async function getInstructions(): Promise<{ content: string; path: string }> {

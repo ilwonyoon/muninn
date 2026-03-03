@@ -282,6 +282,34 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
         return JSONResponse([_memory_to_dict(m) for m in chain])
 
     # ------------------------------------------------------------------
+    # Summary revisions (diff tracking)
+    # ------------------------------------------------------------------
+
+    async def get_summary_revision(request: Request) -> JSONResponse:
+        project_id = request.path_params["project_id"]
+        project = store.get_project(project_id)
+        if project is None:
+            return JSONResponse(
+                {"error": f"Project '{project_id}' not found", "code": "NOT_FOUND"},
+                status_code=404,
+            )
+        revision = store.get_summary_revision(project_id)
+        if revision is None:
+            return JSONResponse(None)
+        return JSONResponse(revision)
+
+    async def acknowledge_summary_revision(request: Request) -> JSONResponse:
+        project_id = request.path_params["project_id"]
+        project = store.get_project(project_id)
+        if project is None:
+            return JSONResponse(
+                {"error": f"Project '{project_id}' not found", "code": "NOT_FOUND"},
+                status_code=404,
+            )
+        store.clear_summary_revision(project_id)
+        return JSONResponse({"ok": True})
+
+    # ------------------------------------------------------------------
     # Instructions
     # ------------------------------------------------------------------
 
@@ -331,6 +359,8 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
         Route("/memories/{memory_id}", update_memory, methods=["PATCH"]),
         Route("/memories/{memory_id}", delete_memory, methods=["DELETE"]),
         Route("/memories/{memory_id}/chain", get_supersede_chain, methods=["GET"]),
+        Route("/projects/{project_id}/summary-revision", get_summary_revision, methods=["GET"]),
+        Route("/projects/{project_id}/summary-revision/acknowledge", acknowledge_summary_revision, methods=["POST"]),
         Route("/search", search_memories, methods=["GET"]),
         Route("/tags", list_tags, methods=["GET"]),
         Route("/stats", get_stats, methods=["GET"]),

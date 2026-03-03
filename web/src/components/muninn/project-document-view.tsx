@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
-import { Check, Pencil, X } from "lucide-react";
-import { updateProject } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { Check, CheckCheck, Pencil, X } from "lucide-react";
+import { updateProject, getSummaryRevision, acknowledgeSummaryRevision } from "@/lib/api";
 import type { Project } from "@/lib/types";
 import { MarkdownContent } from "@/components/muninn/markdown-content";
 import { useAppToast } from "@/lib/toast-context";
+import { relativeTime } from "@/lib/utils";
+import { getChangedParagraphs } from "@/lib/diff";
 
 interface ProjectDocumentViewProps {
   project: Project;
@@ -16,7 +18,30 @@ export function ProjectDocumentView({ project, onUpdated }: ProjectDocumentViewP
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(project.summary ?? "");
   const [saving, setSaving] = useState(false);
+  const [changedParagraphs, setChangedParagraphs] = useState<Set<string> | null>(null);
+  const [acknowledging, setAcknowledging] = useState(false);
   const { toast } = useAppToast();
+
+  useEffect(() => {
+    if (!project.summary || editing) return;
+
+    let cancelled = false;
+    getSummaryRevision(project.id)
+      .then((revision) => {
+        if (cancelled) return;
+        if (revision && revision.previous_summary) {
+          const changed = getChangedParagraphs(project.summary!, revision.previous_summary);
+          setChangedParagraphs(changed.size > 0 ? changed : null);
+        } else {
+          setChangedParagraphs(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setChangedParagraphs(null);
+      });
+
+    return () => { cancelled = true; };
+  }, [project.id, project.summary, editing]);
 
   function handleEdit() {
     setDraft(project.summary ?? "");
@@ -38,6 +63,18 @@ export function ProjectDocumentView({ project, onUpdated }: ProjectDocumentViewP
       toast({ title: "Failed to save document", variant: "error" });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleAcknowledge() {
+    setAcknowledging(true);
+    try {
+      await acknowledgeSummaryRevision(project.id);
+      setChangedParagraphs(null);
+    } catch {
+      toast({ title: "Failed to acknowledge changes", variant: "error" });
+    } finally {
+      setAcknowledging(false);
     }
   }
 
@@ -83,18 +120,73 @@ export function ProjectDocumentView({ project, onUpdated }: ProjectDocumentViewP
     );
   }
 
+  // Split summary into paragraphs for highlight rendering
+  const renderContent = () => {
+    if (!project.summary) return null;
+
+    if (!changedParagraphs || changedParagraphs.size === 0) {
+      return <MarkdownContent content={project.summary} />;
+    }
+
+    // Split by double-newline to get paragraphs, render each with potential highlight
+    const paragraphs = project.summary
+      .split(/\n\n+/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+
+    return (
+      <div>
+        {paragraphs.map((para, idx) => {
+          const isChanged = changedParagraphs.has(para);
+          return isChanged ? (
+            <div
+              key={idx}
+              className="rounded bg-green-900/20 border-l-2 border-green-500 pl-3 -ml-3 mb-1"
+            >
+              <MarkdownContent content={para} />
+            </div>
+          ) : (
+            <div key={idx}>
+              <MarkdownContent content={para} />
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
     <div className="relative">
-      <button
-        onClick={handleEdit}
-        className="absolute right-0 top-0 rounded p-1.5 text-muted hover:bg-card-hover hover:text-foreground"
-        aria-label="Edit document"
-      >
-        <Pencil className="h-3.5 w-3.5" />
-      </button>
+      {/* Header: Last updated + action buttons */}
+      <div className="mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {project.updated_at && (
+            <span className="text-xs text-muted">
+              Last updated: {relativeTime(project.updated_at)}
+            </span>
+          )}
+          {changedParagraphs && changedParagraphs.size > 0 && (
+            <button
+              onClick={handleAcknowledge}
+              disabled={acknowledging}
+              className="flex items-center gap-1 rounded border border-green-500/30 bg-green-900/10 px-2 py-1 text-xs text-green-400 hover:bg-green-900/20 disabled:opacity-50"
+            >
+              <CheckCheck className="h-3 w-3" />
+              {acknowledging ? "처리 중…" : "변경 확인 완료"}
+            </button>
+          )}
+        </div>
+        <button
+          onClick={handleEdit}
+          className="rounded p-1.5 text-muted hover:bg-card-hover hover:text-foreground"
+          aria-label="Edit document"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+      </div>
 
       {project.summary ? (
-        <MarkdownContent content={project.summary} />
+        renderContent()
       ) : (
         <div className="flex flex-col items-center gap-4 py-12">
           <p className="text-sm text-muted">

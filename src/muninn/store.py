@@ -17,7 +17,7 @@ from muninn.models import Memory, MemorySource, Project, ProjectCategory, Projec
 _DEFAULT_DB_DIR = os.path.join(os.path.expanduser("~"), ".local", "share", "muninn")
 _DEFAULT_DB_NAME = "muninn.db"
 
-_CURRENT_SCHEMA_VERSION = 6
+_CURRENT_SCHEMA_VERSION = 8
 
 _UNSET = object()
 
@@ -359,6 +359,20 @@ class MuninnStore:
                     pass
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (7)")
 
+        # v8: add project_summary_revisions table for diff tracking.
+        if current_version < 8:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS project_summary_revisions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id TEXT NOT NULL REFERENCES projects(id),
+                    summary TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_summary_revisions_project
+                    ON project_summary_revisions(project_id, created_at);
+            """)
+            conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (8)")
+
     # ------------------------------------------------------------------
     # Project operations
     # ------------------------------------------------------------------
@@ -497,6 +511,22 @@ class MuninnStore:
         conn = self._get_connection()
         try:
             with conn:
+                # Save current summary to revisions before updating
+                if "summary" in updates:
+                    old_row = conn.execute(
+                        "SELECT summary FROM projects WHERE id = ?", (id,)
+                    ).fetchone()
+                    if old_row is not None and old_row["summary"] is not None:
+                        # Delete older revisions, keep only the latest
+                        conn.execute(
+                            "DELETE FROM project_summary_revisions WHERE project_id = ?",
+                            (id,),
+                        )
+                        conn.execute(
+                            "INSERT INTO project_summary_revisions (project_id, summary) VALUES (?, ?)",
+                            (id, old_row["summary"]),
+                        )
+
                 cursor = conn.execute(
                     f"UPDATE projects SET {set_clause} WHERE id = ?",
                     values,
@@ -510,6 +540,33 @@ class MuninnStore:
         if project is None:
             raise ValueError(f"Project {id!r} not found after update")
         return project
+
+    def get_summary_revision(self, project_id: str) -> dict | None:
+        """Return the previous summary revision (before latest update)."""
+        conn = self._get_connection()
+        try:
+            row = conn.execute(
+                "SELECT summary, created_at FROM project_summary_revisions "
+                "WHERE project_id = ? ORDER BY created_at DESC LIMIT 1",
+                (project_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return None
+        return {"previous_summary": row["summary"], "updated_at": row["created_at"]}
+
+    def clear_summary_revision(self, project_id: str) -> None:
+        """Clear revision (user acknowledged changes)."""
+        conn = self._get_connection()
+        try:
+            with conn:
+                conn.execute(
+                    "DELETE FROM project_summary_revisions WHERE project_id = ?",
+                    (project_id,),
+                )
+        finally:
+            conn.close()
 
     # ------------------------------------------------------------------
     # Memory operations
