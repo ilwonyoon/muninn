@@ -23,7 +23,7 @@ export default function RootLayout({
         <Providers>
           <div className="flex h-screen">
             <Sidebar />
-            <main className="flex-1 overflow-auto">{children}</main>
+            <main className="flex-1 overflow-auto scrollbar-hide">{children}</main>
           </div>
         </Providers>
       </body>

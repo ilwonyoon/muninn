@@ -76,20 +76,21 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Scrollbar — minimal, dark-themed */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* Scrollbar — hidden globally, scroll functionality preserved */
+* {
+  scrollbar-width: none;
 }
-::-webkit-scrollbar-track {
-  background: transparent;
+*::-webkit-scrollbar {
+  display: none;
 }
-::-webkit-scrollbar-thumb {
-  background: var(--border-default);
-  border-radius: 3px;
+
+/* Hide scrollbar but keep scroll functionality */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: var(--border-hover);
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
 
 /* Panel slide-in */

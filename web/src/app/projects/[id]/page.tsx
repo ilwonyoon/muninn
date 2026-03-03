@@ -7,9 +7,10 @@ import { ArrowLeft, Plus } from "lucide-react";
 import { updateProject, deleteMemory } from "@/lib/api";
 import type { Memory, Project } from "@/lib/types";
 import { useProjectMemories } from "@/lib/use-project-memories";
-import { cn } from "@/lib/utils";
+import { cn, getDateGroup } from "@/lib/utils";
 import { StatusDot } from "@/components/muninn/status-dot";
-import { MemoryRow } from "@/components/muninn/memory-row";
+import { MemoryFeedCard } from "@/components/muninn/memory-feed-card";
+import { ProjectDocumentView } from "@/components/muninn/project-document-view";
 import { MemoryDetailPanel } from "@/components/muninn/memory-detail-panel";
 import { SaveMemoryDialog } from "@/components/muninn/save-memory-dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -37,6 +38,7 @@ export default function ProjectDetailPage() {
   const [deleteTarget, setDeleteTarget] = useState<Memory | null>(null);
   const [deleting, setDeleting] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+  const [activeTab, setActiveTab] = useState<"document" | "memories">("document");
 
   // Memories sorted by updated_at DESC (already from API)
   const memories = allMemories;
@@ -116,6 +118,7 @@ export default function ProjectDetailPage() {
     }
   };
 
+
   if (loading && !project) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted">
@@ -137,7 +140,7 @@ export default function ProjectDetailPage() {
       {/* Main list pane */}
       <div
         className={cn(
-          "flex-1 overflow-y-auto px-6 py-8 mx-auto max-w-4xl",
+          "flex-1 overflow-y-auto scrollbar-hide px-6 py-8 mx-auto max-w-4xl",
           panelMemoryId && "hidden md:block"
         )}
       >
@@ -189,56 +192,101 @@ export default function ProjectDetailPage() {
           </button>
         </div>
 
-        {project.summary && (
-          <p className="mt-1 pl-10 text-xs text-muted">{project.summary}</p>
-        )}
-
-        {/* Memory list */}
-        <div className="mt-6 pl-10" ref={listRef}>
-          <div className="divide-y divide-border rounded-lg border border-border">
-            {memories.length === 0 && (
-              <div className="px-4 py-6 text-center text-xs text-muted">
-                No memories yet.
-              </div>
+        {/* Tabs */}
+        <div className="mt-6 flex items-center gap-1 border-b border-border pl-10">
+          <button
+            type="button"
+            onClick={() => setActiveTab("document")}
+            className={cn(
+              "px-3 py-2 text-xs font-medium transition-colors",
+              activeTab === "document"
+                ? "border-b-2 border-foreground text-foreground"
+                : "text-muted hover:text-foreground"
             )}
-            {memories.map((mem, idx) => (
-              <MemoryRow
-                key={mem.id}
-                memory={mem}
-                selected={selectedIdx === idx}
-                active={panelMemoryId === mem.short_id}
-                onSelect={() => {
-                  setSelectedIdx(idx);
-                  setPanelMemoryId(mem.short_id);
-                }}
-                onEdit={() => {
-                  setPanelMemoryId(mem.short_id);
-                }}
-                onDelete={() => setDeleteTarget(mem)}
-              />
-            ))}
-          </div>
+          >
+            Document
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("memories")}
+            className={cn(
+              "px-3 py-2 text-xs font-medium transition-colors",
+              activeTab === "memories"
+                ? "border-b-2 border-foreground text-foreground"
+                : "text-muted hover:text-foreground"
+            )}
+          >
+            Memories ({memories.length})
+          </button>
+        </div>
 
-          {/* Keyboard hints */}
-          <div className="mt-4 flex items-center gap-3 text-[10px] text-muted">
-            <span>
-              <kbd className="rounded border border-border px-1 py-0.5 font-mono">j</kbd>{" "}
-              <kbd className="rounded border border-border px-1 py-0.5 font-mono">k</kbd>{" "}
-              navigate
-            </span>
-            <span>
-              <kbd className="rounded border border-border px-1 py-0.5 font-mono">Enter</kbd>{" "}
-              open
-            </span>
-            <span>
-              <kbd className="rounded border border-border px-1 py-0.5 font-mono">n</kbd>{" "}
-              new
-            </span>
-            <span>
-              <kbd className="rounded border border-border px-1 py-0.5 font-mono">Esc</kbd>{" "}
-              close
-            </span>
-          </div>
+        {/* Tab content */}
+        <div className="mt-6 pl-10" ref={listRef}>
+          {activeTab === "document" ? (
+            <ProjectDocumentView project={project} onUpdated={refetch} />
+          ) : (
+            <>
+              <div className="space-y-3">
+                {memories.length === 0 && (
+                  <div className="px-4 py-6 text-center text-xs text-muted">
+                    No memories yet.
+                  </div>
+                )}
+                {memories.map((mem, idx) => {
+                  const group = getDateGroup(mem.updated_at);
+                  const prevGroup =
+                    idx > 0 ? getDateGroup(memories[idx - 1].updated_at) : null;
+                  const showDivider = group !== prevGroup;
+
+                  return (
+                    <div key={mem.id}>
+                      {showDivider && (
+                        <div className="flex items-center gap-3 py-2 text-[10px] font-medium uppercase tracking-wider text-muted">
+                          <div className="h-px flex-1 bg-border" />
+                          <span>{group}</span>
+                          <div className="h-px flex-1 bg-border" />
+                        </div>
+                      )}
+                      <MemoryFeedCard
+                        memory={mem}
+                        selected={selectedIdx === idx}
+                        active={panelMemoryId === mem.short_id}
+                        onSelect={() => {
+                          setSelectedIdx(idx);
+                          setPanelMemoryId(mem.short_id);
+                        }}
+                        onEdit={() => {
+                          setPanelMemoryId(mem.short_id);
+                        }}
+                        onDelete={() => setDeleteTarget(mem)}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Keyboard hints */}
+              <div className="mt-4 flex items-center gap-3 text-[10px] text-muted">
+                <span>
+                  <kbd className="rounded border border-border px-1 py-0.5 font-mono">j</kbd>{" "}
+                  <kbd className="rounded border border-border px-1 py-0.5 font-mono">k</kbd>{" "}
+                  navigate
+                </span>
+                <span>
+                  <kbd className="rounded border border-border px-1 py-0.5 font-mono">Enter</kbd>{" "}
+                  open
+                </span>
+                <span>
+                  <kbd className="rounded border border-border px-1 py-0.5 font-mono">n</kbd>{" "}
+                  new
+                </span>
+                <span>
+                  <kbd className="rounded border border-border px-1 py-0.5 font-mono">Esc</kbd>{" "}
+                  close
+                </span>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
