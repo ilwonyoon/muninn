@@ -76,20 +76,21 @@ def _log_usage(
 
 def muninn_save(
     project: str,
-    document: str,
+    content: str,
 ) -> str:
     """Save or update the project document (one-pager).
 
-    Always pass the FULL document. If updating, recall first, merge new info,
-    then save. This replaces the entire project summary — partial updates will
+    Always pass the FULL document in the content parameter.
+    If updating, recall first, merge new info, then save.
+    This replaces the entire project summary — partial updates will
     lose existing content.
 
     Auto-creates the project if it does not exist.
     """
     _log_usage("muninn_save", project=project)
     try:
-        if not document or not document.strip():
-            return "Error: 'document' must not be empty or whitespace."
+        if not content or not content.strip():
+            return "Error: 'content' must not be empty or whitespace."
 
         store = _get_store()
 
@@ -97,7 +98,7 @@ def muninn_save(
         if existing is None:
             store.create_project(id=project, name=project.capitalize())
 
-        updated = store.update_project(project, summary=document)
+        updated = store.update_project(project, summary=content)
 
         return format_document_saved(updated)
 

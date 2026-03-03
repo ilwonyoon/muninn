@@ -57,21 +57,21 @@ class TestGetStore:
 
 
 # ---------------------------------------------------------------------------
-# muninn_save — document saving
+# muninn_save — content saving
 # ---------------------------------------------------------------------------
 
 
 class TestMuninnSave:
-    def test_save_document_to_existing_project(self, initialized_store):
-        """Save a document to an existing project returns confirmation."""
+    def test_save_content_to_existing_project(self, initialized_store):
+        """Save a content to an existing project returns confirmation."""
         initialized_store.create_project(id="myproject", name="My Project")
-        result = muninn_save(project="myproject", document="# My Project\n\nA cool app.")
+        result = muninn_save(project="myproject", content="# My Project\n\nA cool app.")
         assert "Saved" in result
         assert "myproject" in result
 
     def test_save_auto_creates_project(self, initialized_store):
         """Save to a non-existing project auto-creates it."""
-        result = muninn_save(project="newproject", document="# New\n\nBrand new project.")
+        result = muninn_save(project="newproject", content="# New\n\nBrand new project.")
         assert "Saved" in result
         project = initialized_store.get_project("newproject")
         assert project is not None
@@ -80,31 +80,31 @@ class TestMuninnSave:
     def test_save_updates_summary(self, initialized_store):
         """Save replaces the entire project summary."""
         initialized_store.create_project(id="upd", name="Updatable")
-        muninn_save(project="upd", document="Version 1")
-        muninn_save(project="upd", document="Version 2")
+        muninn_save(project="upd", content="Version 1")
+        muninn_save(project="upd", content="Version 2")
         project = initialized_store.get_project("upd")
         assert project is not None
         assert project.summary == "Version 2"
 
-    def test_save_empty_document_returns_error(self, initialized_store):
-        """Saving empty document returns error."""
-        result = muninn_save(project="val-proj", document="")
+    def test_save_empty_content_returns_error(self, initialized_store):
+        """Saving empty content returns error."""
+        result = muninn_save(project="val-proj", content="")
         assert "Error" in result
 
-    def test_save_whitespace_document_returns_error(self, initialized_store):
-        """Saving whitespace-only document returns error."""
-        result = muninn_save(project="val-proj", document="   \n  ")
+    def test_save_whitespace_content_returns_error(self, initialized_store):
+        """Saving whitespace-only content returns error."""
+        result = muninn_save(project="val-proj", content="   \n  ")
         assert "Error" in result
 
     def test_save_shows_char_count(self, initialized_store):
         """Save confirmation includes character count."""
         initialized_store.create_project(id="chars", name="Chars")
-        result = muninn_save(project="chars", document="Hello world")
+        result = muninn_save(project="chars", content="Hello world")
         assert "11" in result  # len("Hello world") == 11
 
 
 # ---------------------------------------------------------------------------
-# muninn_recall — document loading
+# muninn_recall — content loading
 # ---------------------------------------------------------------------------
 
 
@@ -114,8 +114,8 @@ class TestMuninnRecall:
         result = muninn_recall()
         assert "No projects found." in result
 
-    def test_recall_specific_project_with_document(self, initialized_store):
-        """Recall a specific project returns its document."""
+    def test_recall_specific_project_with_content(self, initialized_store):
+        """Recall a specific project returns its content."""
         initialized_store.create_project(id="alpha", name="Alpha")
         initialized_store.update_project("alpha", summary="# Alpha\n\nAlpha project doc.")
 
@@ -124,8 +124,8 @@ class TestMuninnRecall:
         assert "alpha" in result
         assert "Alpha project doc." in result
 
-    def test_recall_specific_project_no_document(self, initialized_store):
-        """Recall a project with no document shows 'No document yet.'"""
+    def test_recall_specific_project_no_content(self, initialized_store):
+        """Recall a project with no content shows 'No content yet.'"""
         initialized_store.create_project(id="empty", name="Empty")
 
         result = muninn_recall(project="empty")
@@ -133,7 +133,7 @@ class TestMuninnRecall:
         assert "No document yet." in result
 
     def test_recall_all_active_projects(self, initialized_store):
-        """Recall with project=None returns all active project documents."""
+        """Recall with project=None returns all active project contents."""
         initialized_store.create_project(id="proj-a", name="A")
         initialized_store.create_project(id="proj-b", name="B")
         initialized_store.update_project("proj-a", summary="Doc A")
@@ -164,7 +164,7 @@ class TestMuninnRecall:
 
 
 # ---------------------------------------------------------------------------
-# muninn_search — document search
+# muninn_search — content search
 # ---------------------------------------------------------------------------
 
 
@@ -333,7 +333,7 @@ class TestUsageLogging:
         """Calling a tool appends a valid JSON entry to usage.jsonl."""
         monkeypatch.setenv("MUNINN_DATA_DIR", str(tmp_path))
 
-        muninn_save(project="log-test", document="Logging check doc")
+        muninn_save(project="log-test", content="Logging check doc")
 
         log_path = tmp_path / "usage.jsonl"
         assert log_path.exists(), "usage.jsonl was not created"

@@ -49,7 +49,7 @@ _INSTRUCTIONS = (
     "2. At session end, update the document:\n"
     '   - muninn_recall(project="xxx") to load current document\n'
     "   - Merge new info from this session\n"
-    '   - muninn_save(project="xxx", document="<full markdown one-pager>")\n'
+    '   - muninn_save(project="xxx", content="<full markdown one-pager>")\n'
     "3. Organize by LOGIC, not chronology.\n"
     "\n"
     "## What goes in the document\n"
