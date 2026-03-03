@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Muninn — Project Instructions
 
 ## Feedback Persona
@@ -66,8 +70,14 @@ docs/
 # Install (editable with dev deps)
 uv pip install -e ".[dev]"
 
-# Run tests (244 tests)
+# Run tests (250 tests)
 .venv/bin/python -m pytest tests/ -v
+
+# Run a single test file
+.venv/bin/python -m pytest tests/test_tools.py -v
+
+# Run a single test
+.venv/bin/python -m pytest tests/test_tools.py::TestMuninnSave::test_save_auto_creates_project -v
 
 # Run the MCP server (stdio — default, used by all 4 clients)
 .venv/bin/python -m muninn.server
@@ -77,41 +87,49 @@ uv pip install -e ".[dev]"
 
 # Run dashboard frontend (separate terminal)
 cd web && npm run dev
+
+# Reset all data (wipe memories, tags, revisions, clear summaries)
+.venv/bin/python -m muninn.server --reset
+
+# Restart the HTTP server (managed by launchd)
+launchctl kickstart -k gui/$(id -u)/com.muninn.server
 ```
 
 ## Architecture Decisions
 
 - **Frozen dataclasses** — All models are immutable (`@dataclass(frozen=True)`)
 - **No FK on superseded_by** — `superseded_by` is a plain TEXT column (not a foreign key) because soft-delete uses the sentinel value `'_deleted'`
-- **Character budget** — `max_chars` instead of token budget (no tokenizer dependency)
+- **Document-first architecture** — MCP tools save/recall project documents (markdown one-pagers) directly to `project.summary`, not atomic memories. Memories remain in DB for dashboard Progress/Timeline tabs only.
+- **Markdown validation** — `muninn_save` rejects content without `## ` headers, forcing LLM clients to format as structured markdown
 - **Module-level store** — `tools.py` uses a module-level `_store` initialized once by `server.py` via `init_store()`
 - **Junction table for tags** — `memory_tags` table instead of JSON TEXT column for proper FTS indexing
 - **FTS5 sync triggers** — INSERT/UPDATE/DELETE triggers keep `memories_fts` in sync automatically
 - **WAL + busy_timeout** — Handles concurrent access from multiple MCP clients
 - **Dual transport** — stdio for AI clients, Streamable HTTP for dashboard REST API (localhost)
 - **Bearer token auth** — ASGI middleware on HTTP transport, key via `MUNINN_API_KEY` env var
-- **Prefix ID matching** — `delete_memory`/`update_memory` accept 6-8 char prefixes, not just full UUIDs
+- **OAuth 2.0** — `MUNINN_OWNER_PASSWORD` enables OAuth for remote access (claude.ai, ChatGPT)
 - **Literal enum on action** — `muninn_manage` uses `Literal[...]` so JSON schema includes enum for LLM discovery
+- **Editable instructions** — MCP instructions are read from `~/.local/share/muninn/instructions.md` (auto-created with defaults on first run, `--reset` deletes it)
 
 ## MCP Tools (6 total)
 
 | Tool | Purpose |
 |------|---------|
-| `muninn_save` | Save memory to a project (content + optional tags) |
-| `muninn_recall` | Load project memories (chronological, char budget) |
-| `muninn_search` | FTS5 full-text search across memories |
+| `muninn_save` | Save/update a project document (structured markdown one-pager) |
+| `muninn_recall` | Load project document(s) — one project or all active |
+| `muninn_search` | Keyword search across project documents |
 | `muninn_status` | List all projects with status overview |
-| `muninn_manage` | Project/memory management (set_status, delete, update, create) |
-| `muninn_sync` | Sync GitHub repo data (commits, issues, PRs) into memory |
+| `muninn_manage` | Project lifecycle (set_status, create_project, delete_project) |
+| `muninn_sync` | Sync GitHub repo data (commits, issues, PRs) |
 
-## Memory Philosophy
+## Document Philosophy
 
-Muninn is a **bridge between AI clients**, not technical documentation.
+Muninn is a **bridge between AI clients**, not technical documentation. Each project has a single **document** — a markdown one-pager stored in `project.summary`.
 
-**Save:** thoughts, decisions, direction changes, what's next, product-level summaries.
+**Save:** what the project IS, key decisions, direction, current status, open questions.
 **Don't save:** code changes, test results, function names, implementation details (git handles that).
 
-Project summaries should describe what the project does from a **user/product perspective**, not an engineer perspective.
+Documents must be structured markdown with `## ` headers. Plain text is rejected by `muninn_save`.
 
 ## Project Status
 
@@ -133,3 +151,4 @@ Project summaries should describe what the project does from a **user/product pe
 - Immutable patterns: frozen dataclasses, no mutation
 - Small focused files (<400 lines each)
 - DB schema unchanged — deprecated columns (depth, category, parent_memory_id) remain but are ignored by code
+- Memory CRUD is dashboard-only (REST API in `api.py`) — MCP tools operate on project documents only
