@@ -95,6 +95,14 @@ def muninn_save(
         if not content or not content.strip():
             return "Error: 'content' must not be empty or whitespace."
 
+        if "## " not in content:
+            return (
+                "Error: content must be a structured markdown document with "
+                "## headers (e.g. ## Overview, ## Key Decisions, ## Current Status). "
+                "Single-line summaries are not accepted. "
+                "Please reformat as a full markdown one-pager and call muninn_save again."
+            )
+
         store = _get_store()
 
         existing = store.get_project(project)

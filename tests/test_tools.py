@@ -65,26 +65,26 @@ class TestMuninnSave:
     def test_save_content_to_existing_project(self, initialized_store):
         """Save a content to an existing project returns confirmation."""
         initialized_store.create_project(id="myproject", name="My Project")
-        result = muninn_save(project="myproject", content="# My Project\n\nA cool app.")
+        result = muninn_save(project="myproject", content="# My Project\n\n## Overview\nA cool app.")
         assert "Saved" in result
         assert "myproject" in result
 
     def test_save_auto_creates_project(self, initialized_store):
         """Save to a non-existing project auto-creates it."""
-        result = muninn_save(project="newproject", content="# New\n\nBrand new project.")
+        result = muninn_save(project="newproject", content="# New\n\n## Overview\nBrand new project.")
         assert "Saved" in result
         project = initialized_store.get_project("newproject")
         assert project is not None
-        assert project.summary == "# New\n\nBrand new project."
+        assert project.summary == "# New\n\n## Overview\nBrand new project."
 
     def test_save_updates_summary(self, initialized_store):
         """Save replaces the entire project summary."""
         initialized_store.create_project(id="upd", name="Updatable")
-        muninn_save(project="upd", content="Version 1")
-        muninn_save(project="upd", content="Version 2")
+        muninn_save(project="upd", content="## Overview\nVersion 1")
+        muninn_save(project="upd", content="## Overview\nVersion 2")
         project = initialized_store.get_project("upd")
         assert project is not None
-        assert project.summary == "Version 2"
+        assert project.summary == "## Overview\nVersion 2"
 
     def test_save_empty_content_returns_error(self, initialized_store):
         """Saving empty content returns error."""
@@ -96,11 +96,23 @@ class TestMuninnSave:
         result = muninn_save(project="val-proj", content="   \n  ")
         assert "Error" in result
 
+    def test_save_plain_text_returns_error(self, initialized_store):
+        """Saving plain text without markdown headers returns error."""
+        result = muninn_save(project="val-proj", content="This is a plain text summary without any headers.")
+        assert "Error" in result
+        assert "## headers" in result
+
+    def test_save_with_markdown_headers_succeeds(self, initialized_store):
+        """Saving content with ## headers succeeds."""
+        content = "# My Project\n\n## Overview\nA cool app.\n\n## Status\nIn progress."
+        result = muninn_save(project="md-proj", content=content)
+        assert "Saved" in result
+
     def test_save_shows_char_count(self, initialized_store):
         """Save confirmation includes character count."""
         initialized_store.create_project(id="chars", name="Chars")
-        result = muninn_save(project="chars", content="Hello world")
-        assert "11" in result  # len("Hello world") == 11
+        result = muninn_save(project="chars", content="## Overview\nHello world")
+        assert "23" in result  # len("## Overview\nHello world") == 23
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +345,7 @@ class TestUsageLogging:
         """Calling a tool appends a valid JSON entry to usage.jsonl."""
         monkeypatch.setenv("MUNINN_DATA_DIR", str(tmp_path))
 
-        muninn_save(project="log-test", content="Logging check doc")
+        muninn_save(project="log-test", content="## Overview\nLogging check doc")
 
         log_path = tmp_path / "usage.jsonl"
         assert log_path.exists(), "usage.jsonl was not created"
