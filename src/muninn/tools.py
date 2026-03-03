@@ -253,8 +253,7 @@ def muninn_sync(project: str) -> str:
     superseded.
 
     The project must have a ``github_repo`` field set (e.g. ``owner/repo``).
-    Use ``muninn_manage(action='update_project', field='github_repo', ...)``
-    to link a repo first.
+    Set it via the dashboard or REST API before syncing.
 
     Authentication: set the ``GITHUB_TOKEN`` environment variable for private
     repos or to avoid rate limits.
@@ -273,8 +272,7 @@ def muninn_sync(project: str) -> str:
         if not proj.github_repo:
             return (
                 f"Error: project '{project}' has no linked GitHub repository. "
-                "Set one with: muninn_manage(action='update_project', "
-                f"project='{project}', field='github_repo', value='owner/repo')"
+                "Set github_repo via the dashboard or REST API first."
             )
 
         from muninn.github_sync import sync_github
