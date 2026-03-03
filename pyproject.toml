@@ -18,6 +18,7 @@ classifiers = [
 ]
 dependencies = [
     "mcp>=1.25,<2",
+    "libsql-experimental>=0.0.55",
 ]
 
 [project.urls]

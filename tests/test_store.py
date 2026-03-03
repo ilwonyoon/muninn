@@ -622,10 +622,19 @@ class TestMemoryCountInProject:
 
 def _worker_write(db_path: str, project_id: str, n: int, results: list) -> None:
     """Write *n* memories to the store; append True/error message to results."""
+    import time
     try:
         s = MuninnStore(db_path=db_path)
         for i in range(n):
-            s.save_memory(project_id=project_id, content=f"Worker {project_id} memory {i}")
+            for attempt in range(5):
+                try:
+                    s.save_memory(project_id=project_id, content=f"Worker {project_id} memory {i}")
+                    break
+                except Exception as e:
+                    if "locked" in str(e) and attempt < 4:
+                        time.sleep(0.05 * (attempt + 1))
+                        continue
+                    raise
         results.append(True)
     except Exception as exc:
         results.append(str(exc))
