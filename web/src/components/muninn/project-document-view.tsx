@@ -96,8 +96,17 @@ export function ProjectDocumentView({ project, onUpdated }: ProjectDocumentViewP
       {project.summary ? (
         <MarkdownContent content={project.summary} />
       ) : (
-        <div className="flex flex-col items-start gap-3 py-8">
-          <p className="text-sm text-muted">No document yet.</p>
+        <div className="flex flex-col items-center gap-4 py-12">
+          <p className="text-sm text-muted">
+            아직 작성된 문서가 없습니다.
+          </p>
+          <p className="text-xs leading-relaxed text-muted/70 text-center">
+            이 탭은 프로젝트의 전체 모습을 한 페이지로 정리하는 공간입니다.
+            <br />
+            프로젝트가 무엇인지, 누구를 위한 것인지, 어떤 방향으로 가고 있는지를
+            <br />
+            마크다운 문서로 작성해보세요.
+          </p>
           <button
             onClick={handleEdit}
             className="rounded bg-accent px-3 py-1.5 text-xs text-white hover:bg-accent/90"

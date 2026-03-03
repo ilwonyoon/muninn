@@ -11,6 +11,8 @@ import { cn, getDateGroup } from "@/lib/utils";
 import { StatusDot } from "@/components/muninn/status-dot";
 import { MemoryFeedCard } from "@/components/muninn/memory-feed-card";
 import { ProjectDocumentView } from "@/components/muninn/project-document-view";
+import { ProjectProgressView } from "@/components/muninn/project-progress-view";
+import { ProjectTimelineView } from "@/components/muninn/project-timeline-view";
 import { MemoryDetailPanel } from "@/components/muninn/memory-detail-panel";
 import { SaveMemoryDialog } from "@/components/muninn/save-memory-dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -38,7 +40,7 @@ export default function ProjectDetailPage() {
   const [deleteTarget, setDeleteTarget] = useState<Memory | null>(null);
   const [deleting, setDeleting] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
-  const [activeTab, setActiveTab] = useState<"document" | "memories">("document");
+  const [activeTab, setActiveTab] = useState<"product" | "progress" | "timeline" | "memories">("product");
 
   // Memories sorted by updated_at DESC (already from API)
   const memories = allMemories;
@@ -194,42 +196,60 @@ export default function ProjectDetailPage() {
 
         {/* Tabs */}
         <div className="mt-6 flex items-center gap-1 border-b border-border pl-10">
-          <button
-            type="button"
-            onClick={() => setActiveTab("document")}
-            className={cn(
-              "px-3 py-2 text-xs font-medium transition-colors",
-              activeTab === "document"
-                ? "border-b-2 border-foreground text-foreground"
-                : "text-muted hover:text-foreground"
-            )}
-          >
-            Document
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("memories")}
-            className={cn(
-              "px-3 py-2 text-xs font-medium transition-colors",
-              activeTab === "memories"
-                ? "border-b-2 border-foreground text-foreground"
-                : "text-muted hover:text-foreground"
-            )}
-          >
-            Memories ({memories.length})
-          </button>
+          {([
+            { key: "product", label: "Product" },
+            { key: "progress", label: "Progress" },
+            { key: "timeline", label: "Timeline" },
+            { key: "memories", label: `Memories (${memories.length})` },
+          ] as const).map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setActiveTab(tab.key)}
+              className={cn(
+                "px-3 py-2 text-xs font-medium transition-colors",
+                activeTab === tab.key
+                  ? "border-b-2 border-foreground text-foreground"
+                  : "text-muted hover:text-foreground"
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
 
         {/* Tab content */}
         <div className="mt-6 pl-10" ref={listRef}>
-          {activeTab === "document" ? (
+          {activeTab === "product" && (
             <ProjectDocumentView project={project} onUpdated={refetch} />
-          ) : (
+          )}
+
+          {activeTab === "progress" && (
+            <ProjectProgressView projectId={projectId} onMemoryCreated={refetch} />
+          )}
+
+          {activeTab === "timeline" && (
+            <ProjectTimelineView
+              memories={memories}
+              onSelectMemory={(shortId) => setPanelMemoryId(shortId)}
+            />
+          )}
+
+          {activeTab === "memories" && (
             <>
               <div className="space-y-3">
                 {memories.length === 0 && (
-                  <div className="px-4 py-6 text-center text-xs text-muted">
-                    No memories yet.
+                  <div className="py-12 text-center">
+                    <p className="text-sm text-muted">
+                      아직 저장된 메모리가 없습니다.
+                    </p>
+                    <p className="mt-3 text-xs leading-relaxed text-muted/70">
+                      메모리는 프로젝트에 대한 개별 기록입니다.
+                      <br />
+                      AI와의 대화 중 떠오른 생각, 결정 사항, 방향 전환 등을
+                      <br />
+                      짧은 메모로 남겨보세요.
+                    </p>
                   </div>
                 )}
                 {memories.map((mem, idx) => {
