@@ -80,10 +80,13 @@ def muninn_save(
 ) -> str:
     """Save or update the project document (one-pager).
 
-    Always pass the FULL document in the content parameter.
-    If updating, recall first, merge new info, then save.
-    This replaces the entire project summary — partial updates will
-    lose existing content.
+    The content parameter MUST be a full markdown document with headers (##),
+    bullet points, and structured sections — NEVER a single-line summary.
+    Use sections like: Overview, Key Decisions, Current Status, Open Questions.
+
+    If updating, call muninn_recall first, merge new info, then save the
+    complete updated document. This replaces the entire project summary —
+    partial updates will lose existing content.
 
     Auto-creates the project if it does not exist.
     """
