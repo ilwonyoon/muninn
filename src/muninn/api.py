@@ -120,6 +120,16 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
             )
         return JSONResponse(_project_to_dict(project))
 
+    async def delete_project(request: Request) -> JSONResponse:
+        project_id = request.path_params["project_id"]
+        deleted = store.delete_project(project_id)
+        if not deleted:
+            return JSONResponse(
+                {"error": f"Project '{project_id}' not found", "code": "NOT_FOUND"},
+                status_code=404,
+            )
+        return JSONResponse({"deleted": True})
+
     # ------------------------------------------------------------------
     # Memories
     # ------------------------------------------------------------------
@@ -353,6 +363,7 @@ def create_api_routes(store: MuninnStore) -> list[Route]:
         Route("/projects", create_project, methods=["POST"]),
         Route("/projects/{project_id}", get_project, methods=["GET"]),
         Route("/projects/{project_id}", update_project, methods=["PATCH"]),
+        Route("/projects/{project_id}", delete_project, methods=["DELETE"]),
         Route("/projects/{project_id}/memories", list_memories, methods=["GET"]),
         Route("/memories", create_memory, methods=["POST"]),
         Route("/memories/{memory_id}", get_memory, methods=["GET"]),

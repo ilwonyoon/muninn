@@ -231,7 +231,7 @@ def muninn_status() -> str:
 
 
 def muninn_manage(
-    action: Literal["set_status", "delete_memory", "update_memory", "update_project", "create_project"],
+    action: Literal["set_status", "delete_memory", "update_memory", "update_project", "create_project", "delete_project"],
     project: str,
     status: str | None = None,
     memory_id: str | None = None,
@@ -271,6 +271,10 @@ def muninn_manage(
       Note: muninn_save auto-creates projects, so only use this when you want
       to set a specific display name upfront before saving any memories.
       Example: action="create_project", project="myapp", value="My App"
+
+    delete_project — Permanently delete a project and ALL its memories.
+      This is irreversible. All memories, tags, and summary revisions are removed.
+      Example: action="delete_project", project="old-project"
     """
     _log_usage("muninn_manage", project=project)
     try:
@@ -353,7 +357,16 @@ def muninn_manage(
                 f"{created.id} ({created.name})",
             )
 
-        return f"Error: unknown action '{action}'. Valid actions: set_status, delete_memory, update_project, create_project."
+        if action == "delete_project":
+            deleted = store.delete_project(project)
+            if deleted:
+                return format_manage_result(
+                    "Project deleted",
+                    f"{project} and all its memories have been permanently removed",
+                )
+            return f"Error: project '{project}' not found."
+
+        return f"Error: unknown action '{action}'. Valid actions: set_status, delete_memory, update_memory, update_project, create_project, delete_project."
 
     except Exception as exc:
         return f"Error in manage ({action}): {exc}"

@@ -285,6 +285,41 @@ export async function updateProject(
 }
 
 // ---------------------------------------------------------------------------
+// 4b. deleteProject
+// ---------------------------------------------------------------------------
+
+export async function deleteProject(id: string): Promise<boolean> {
+  const client = await ensureInit();
+
+  // Check project exists
+  const check = await client.execute({
+    sql: "SELECT id FROM projects WHERE id = ?",
+    args: [id],
+  });
+  if (check.rows.length === 0) return false;
+
+  // Cascade delete: tags → memories → revisions → project
+  await client.execute({
+    sql: "DELETE FROM memory_tags WHERE memory_id IN (SELECT id FROM memories WHERE project_id = ?)",
+    args: [id],
+  });
+  await client.execute({
+    sql: "DELETE FROM memories WHERE project_id = ?",
+    args: [id],
+  });
+  await client.execute({
+    sql: "DELETE FROM project_summary_revisions WHERE project_id = ?",
+    args: [id],
+  });
+  await client.execute({
+    sql: "DELETE FROM projects WHERE id = ?",
+    args: [id],
+  });
+
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // 5. getSummaryRevision
 // ---------------------------------------------------------------------------
 

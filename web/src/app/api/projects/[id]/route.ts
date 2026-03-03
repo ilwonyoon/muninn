@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureInit, getProject, updateProject } from "@/lib/db";
+import { ensureInit, getProject, updateProject, deleteProject } from "@/lib/db";
 
 export async function GET(
   _request: NextRequest,
@@ -74,4 +74,20 @@ export async function PATCH(
       { status: 400 }
     );
   }
+}
+
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  await ensureInit();
+  const { id } = await params;
+  const deleted = await deleteProject(id);
+  if (!deleted) {
+    return NextResponse.json(
+      { error: `Project '${id}' not found`, code: "NOT_FOUND" },
+      { status: 404 }
+    );
+  }
+  return NextResponse.json({ deleted: true });
 }

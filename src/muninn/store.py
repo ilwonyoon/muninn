@@ -585,6 +585,51 @@ class MuninnStore:
             raise ValueError(f"Project {id!r} not found after update")
         return project
 
+    def delete_project(self, id: str) -> bool:
+        """Delete a project and all associated data.
+
+        Cascade-deletes: memory_tags → memories → project_summary_revisions → projects.
+        Returns ``True`` if the project existed and was deleted.
+        """
+        conn = self._get_connection()
+        try:
+            # Check project exists.
+            row = _row_to_dict(conn.execute(
+                "SELECT id FROM projects WHERE id = ?", (id,)
+            ))
+            if row is None:
+                return False
+
+            # Cascade delete: tags for all project memories.
+            conn.execute(
+                """
+                DELETE FROM memory_tags WHERE memory_id IN (
+                    SELECT id FROM memories WHERE project_id = ?
+                )
+                """,
+                (id,),
+            )
+            # Delete all memories.
+            conn.execute(
+                "DELETE FROM memories WHERE project_id = ?",
+                (id,),
+            )
+            # Delete summary revisions.
+            conn.execute(
+                "DELETE FROM project_summary_revisions WHERE project_id = ?",
+                (id,),
+            )
+            # Delete the project itself.
+            conn.execute(
+                "DELETE FROM projects WHERE id = ?",
+                (id,),
+            )
+            conn.commit()
+            self._sync(conn)
+        finally:
+            conn.close()
+        return True
+
     def get_summary_revision(self, project_id: str) -> dict | None:
         """Return the previous summary revision (before latest update)."""
         conn = self._get_connection()
