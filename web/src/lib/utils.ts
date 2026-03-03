@@ -46,6 +46,23 @@ export function extractTitle(content: string, maxLen = 60): string {
   return truncate(stripMarkdown(firstLine), maxLen);
 }
 
+/** Classify a date string into a human-readable group label. */
+export function getDateGroup(dateString: string): string {
+  const dt = new Date(dateString);
+  const now = new Date();
+
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfYesterday = new Date(startOfToday.getTime() - 86_400_000);
+  const startOfWeek = new Date(startOfToday.getTime() - startOfToday.getDay() * 86_400_000);
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  if (dt >= startOfToday) return "Today";
+  if (dt >= startOfYesterday) return "Yesterday";
+  if (dt >= startOfWeek) return "This week";
+  if (dt >= startOfMonth) return "This month";
+  return "Older";
+}
+
 /** Extract body preview — full content flattened, markdown stripped. */
 export function extractBody(content: string, maxLen = 140): string {
   const flat = content

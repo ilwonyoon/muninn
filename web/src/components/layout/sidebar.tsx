@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
-  Brain,
   ChevronRight,
   FileText,
   FolderOpen,
@@ -13,6 +12,7 @@ import {
   Settings,
   User,
 } from "lucide-react";
+import { RavenIcon } from "@/components/icons/raven-icon";
 import { useProjectStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { StatusDot } from "@/components/muninn/status-dot";
@@ -149,7 +149,7 @@ export function Sidebar() {
         href="/"
         className="flex items-center gap-2 border-b border-border px-4 py-3"
       >
-        <Brain className="h-5 w-5 text-accent" />
+        <RavenIcon className="h-5 w-5 text-accent" />
         <span className="text-sm font-semibold text-foreground">Muninn</span>
       </Link>
 
