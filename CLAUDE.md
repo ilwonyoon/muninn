@@ -152,3 +152,30 @@ Documents must be structured markdown with `## ` headers. Plain text is rejected
 - Small focused files (<400 lines each)
 - DB schema unchanged — deprecated columns (depth, category, parent_memory_id) remain but are ignored by code
 - Memory CRUD is dashboard-only (REST API in `api.py`) — MCP tools operate on project documents only
+
+## Codex Delegation
+
+Claude = 관리자 (계획, 리뷰, 검증). Codex = 실행자 (구현, 테스트). `codex-collab` 스킬로 위임.
+
+### Role Split
+
+| Role | Owner | Scope |
+|------|-------|-------|
+| Planning & Design | Claude | Architecture, API design, DB schema |
+| Code Review | Claude | PR review, quality gates |
+| Implementation | Codex | Code changes, new files, refactoring |
+| Test Writing | Codex | Unit/integration tests |
+| Verification | Claude | Review Codex output, run tests |
+
+### Delegation Protocol
+
+1. Claude plans → delegates via `codex-collab run`
+2. Codex implements → returns results
+3. Claude reviews → accepts or re-delegates with specific feedback
+
+### Never Delegate to Codex
+
+- DB schema migrations
+- Architecture / design decisions
+- Security-critical code (`auth.py`, token handling)
+- CLAUDE.md / project config changes

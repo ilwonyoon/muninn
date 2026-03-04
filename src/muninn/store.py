@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import libsql_experimental as libsql
+import libsql
 
 from muninn.models import Memory, MemorySource, Project, ProjectCategory, ProjectStatus, validate_memory_content, validate_tags
 
@@ -256,10 +256,10 @@ class MuninnStore:
                 conn.sync()
             except Exception as exc:
                 import logging
-                logging.getLogger("muninn").warning(
-                    "Turso sync failed, falling back to local-only: %s", exc
+                logging.getLogger("muninn").error(
+                    "Turso connection/sync failed: %s", exc
                 )
-                conn = libsql.connect(self._db_path)
+                raise
         else:
             conn = libsql.connect(self._db_path)
 
@@ -273,7 +273,8 @@ class MuninnStore:
                 conn.sync()
             except Exception as exc:
                 import logging
-                logging.getLogger("muninn").warning("Turso sync failed: %s", exc)
+                logging.getLogger("muninn").error("Turso sync failed: %s", exc)
+                raise
 
     # ------------------------------------------------------------------
     # Migrations
