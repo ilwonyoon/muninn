@@ -19,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 from pathlib import Path
@@ -95,6 +96,8 @@ _INSTRUCTIONS = (
     "- archived: completed or past project\n"
 )
 
+_LOGGER = logging.getLogger("muninn")
+
 
 def _instructions_path() -> Path:
     """Return the path to the user-editable instructions file."""
@@ -103,19 +106,33 @@ def _instructions_path() -> Path:
 
 def _load_instructions(store: MuninnStore) -> str:
     """Load instructions from DB, seeding from file/default when empty."""
-    content = store.get_instructions()
+    try:
+        content = store.get_instructions()
+    except Exception as exc:
+        _LOGGER.warning("Failed to read instructions from DB: %s", exc)
+        content = ""
+
     if content:
         return content
 
     # Legacy fallback: seed DB from the previous instructions file once.
     path = _instructions_path()
-    if path.exists():
-        seeded = path.read_text(encoding="utf-8")
-        store.update_instructions(seeded)
-        return seeded
+    try:
+        if path.exists():
+            seeded = path.read_text(encoding="utf-8")
+            try:
+                store.update_instructions(seeded)
+            except Exception as exc:
+                _LOGGER.warning("Failed to seed instructions from file into DB: %s", exc)
+            return seeded
+    except Exception as exc:
+        _LOGGER.warning("Failed to load legacy instructions file: %s", exc)
 
     # Fresh install fallback: seed DB with bundled defaults.
-    store.update_instructions(_INSTRUCTIONS)
+    try:
+        store.update_instructions(_INSTRUCTIONS)
+    except Exception as exc:
+        _LOGGER.warning("Failed to seed default instructions into DB: %s", exc)
     return _INSTRUCTIONS
 
 

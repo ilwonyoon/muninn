@@ -109,6 +109,12 @@ _SCHEMA_STATEMENTS = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
     "CREATE INDEX IF NOT EXISTS idx_summary_revisions_project ON project_summary_revisions(project_id, created_at)",
+    """CREATE TABLE IF NOT EXISTS instructions (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL DEFAULT '',
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""",
+    "INSERT OR IGNORE INTO instructions (key, value) VALUES ('global', '')",
     "INSERT OR IGNORE INTO schema_version (version) VALUES (8)",
 ]
 
@@ -780,21 +786,24 @@ class MuninnStore:
     def get_instructions(self) -> str:
         """Get instructions from DB. Returns empty string if none."""
         self._sync_if_needed()
-        mode = self._instructions_storage_mode(create_if_missing=False)
+        try:
+            mode = self._instructions_storage_mode(create_if_missing=False)
 
-        if mode == "missing":
+            if mode in {"missing", "unknown"}:
+                return ""
+            if mode == "key_value":
+                row = self._conn.execute(
+                    "SELECT value FROM instructions WHERE key = 'global' LIMIT 1"
+                ).fetchone()
+                return str(row[0]) if row and row[0] is not None else ""
+            if mode == "id_content":
+                row = self._conn.execute(
+                    "SELECT content FROM instructions ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                return str(row[0]) if row and row[0] is not None else ""
+        except Exception:
             return ""
-        if mode == "key_value":
-            row = self._conn.execute(
-                "SELECT value FROM instructions WHERE key = 'global' LIMIT 1"
-            ).fetchone()
-            return str(row[0]) if row and row[0] is not None else ""
-        if mode == "id_content":
-            row = self._conn.execute(
-                "SELECT content FROM instructions ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-            return str(row[0]) if row and row[0] is not None else ""
-        raise RuntimeError("Unsupported instructions table schema")
+        return ""
 
     def update_instructions(self, content: str) -> None:
         """Update instructions in DB (upsert)."""

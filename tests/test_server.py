@@ -100,6 +100,14 @@ class TestCreateMcp:
         second = mcp._mcp_server.create_initialization_options()
         assert second.instructions == "Instruction B"
 
+    def test_creates_mcp_when_instructions_table_is_missing(self, store):
+        store._conn.execute("DROP TABLE IF EXISTS instructions")
+        store._conn.commit()
+
+        mcp = _create_mcp(store=store)
+        init_opts = mcp._mcp_server.create_initialization_options()
+        assert init_opts.instructions is not None
+
 
 class TestInstructionLoading:
     def test_seeds_db_from_legacy_file_when_db_empty(self, store, tmp_path, monkeypatch):
@@ -121,3 +129,18 @@ class TestInstructionLoading:
 
         assert loaded == _INSTRUCTIONS
         assert store.get_instructions() == _INSTRUCTIONS
+
+    def test_falls_back_to_default_when_store_read_fails(self, tmp_path, monkeypatch):
+        class BrokenStore:
+            def get_instructions(self):
+                raise RuntimeError("boom")
+
+            def update_instructions(self, content):
+                raise RuntimeError("boom")
+
+        missing = tmp_path / "missing-instructions.md"
+        monkeypatch.setattr("muninn.server._instructions_path", lambda: missing)
+
+        loaded = _load_instructions(BrokenStore())  # type: ignore[arg-type]
+
+        assert loaded == _INSTRUCTIONS

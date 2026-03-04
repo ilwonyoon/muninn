@@ -1098,6 +1098,21 @@ class TestInstructions:
         """get_instructions returns empty string when none is set."""
         assert store.get_instructions() == ""
 
+    def test_get_instructions_returns_empty_when_table_missing(self, store):
+        """get_instructions returns empty string if instructions table is absent."""
+        store._conn.execute("DROP TABLE IF EXISTS instructions")
+        store._conn.commit()
+
+        assert store.get_instructions() == ""
+
+    def test_get_instructions_returns_empty_for_unknown_schema(self, store):
+        """get_instructions tolerates unexpected instructions schema."""
+        store._conn.execute("DROP TABLE IF EXISTS instructions")
+        store._conn.execute("CREATE TABLE instructions (foo TEXT)")
+        store._conn.commit()
+
+        assert store.get_instructions() == ""
+
     def test_update_instructions_persists(self, store):
         """update_instructions stores and returns latest content."""
         store.update_instructions("Use project documents.")
