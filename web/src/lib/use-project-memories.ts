@@ -6,6 +6,7 @@ import {
   listMemories,
   listTags,
 } from "./api-client";
+import { useProjectStore } from "./store";
 import type {
   Memory,
   Project,
@@ -31,8 +32,12 @@ export function useProjectMemories(projectId: string): ProjectMemoriesState {
   const fetchData = useCallback(() => {
     if (!projectId) return;
     setLoading(true);
+    const cachedProject = useProjectStore
+      .getState()
+      .projects.find((p) => p.id === projectId);
+
     Promise.all([
-      getProject(projectId),
+      cachedProject ? Promise.resolve(cachedProject) : getProject(projectId),
       listMemories(projectId),
       listTags(projectId),
     ])

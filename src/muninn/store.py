@@ -58,7 +58,7 @@ _SCHEMA_STATEMENTS = [
         PRIMARY KEY (memory_id, tag)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_memory_tags_tag ON memory_tags(tag)",
-    "CREATE INDEX IF NOT EXISTS idx_memories_project_id ON memories(project_id)",
+    "CREATE INDEX IF NOT EXISTS idx_memories_recall ON memories(project_id, superseded_by, updated_at DESC)",
     "CREATE INDEX IF NOT EXISTS idx_memories_superseded_by ON memories(superseded_by)",
     "CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category)",
     "CREATE INDEX IF NOT EXISTS idx_memories_parent ON memories(parent_memory_id)",
@@ -797,26 +797,32 @@ class MuninnStore:
             return {}, {"chars_loaded": 0, "chars_budget": max_chars, "memories_loaded": 0, "memories_dropped": 0}
 
         placeholders = ",".join("?" for _ in project_ids)
-
-        # Base query.
-        query = f"""
-            SELECT * FROM memories
-            WHERE project_id IN ({placeholders})
-              AND superseded_by IS NULL
+        where_clause = f"""
+            project_id IN ({placeholders})
+            AND superseded_by IS NULL
         """
         params: list[object] = list(project_ids)
 
         # Tag filter: require ALL tags present.
         if tags:
             for tag in tags:
-                query += """
+                where_clause += """
                     AND id IN (
                         SELECT memory_id FROM memory_tags WHERE tag = ?
                     )
                 """
                 params.append(tag)
 
-        query += " ORDER BY updated_at DESC"
+        count_query = f"SELECT COUNT(*) AS cnt FROM memories WHERE {where_clause}"
+        count_row = _row_to_dict(self._conn.execute(count_query, tuple(params)))
+        total_matching = int(count_row["cnt"]) if count_row is not None else 0
+
+        query = f"""
+            SELECT * FROM memories
+            WHERE {where_clause}
+            ORDER BY updated_at DESC
+            LIMIT 50
+        """
 
         mem_rows = _rows_to_dicts(self._conn.execute(query, tuple(params)))
 
@@ -828,17 +834,16 @@ class MuninnStore:
         result: dict[str, list[Memory]] = {}
         char_count = 0
         loaded_count = 0
-        dropped_count = 0
-
         for r in mem_rows:
             content_len = len(r["content"])
             if char_count + content_len > max_chars:
-                dropped_count += 1
-                continue  # count ALL dropped, don't break
+                break
             char_count += content_len
             loaded_count += 1
             memory = _row_to_memory(r, tags=tags_map.get(r["id"], ()))
             result.setdefault(memory.project_id, []).append(memory)
+
+        dropped_count = max(total_matching - loaded_count, 0)
 
         stats = {
             "chars_loaded": char_count,
@@ -1041,6 +1046,28 @@ class MuninnStore:
         self._sync_after_write()
         return cursor.rowcount > 0
 
+    def batch_supersede(self, old_ids: list[str], new_id: str) -> int:
+        """Mark multiple memories as superseded by the same new memory.
+
+        Returns the number of rows updated.
+        """
+        if not old_ids:
+            return 0
+
+        placeholders = ",".join("?" * len(old_ids))
+        now = _now_iso()
+        cursor = self._conn.execute(
+            f"""
+            UPDATE memories
+            SET superseded_by = ?, updated_at = ?
+            WHERE id IN ({placeholders}) AND superseded_by IS NULL
+            """,
+            (new_id, now, *old_ids),
+        )
+        self._conn.commit()
+        self._sync_after_write()
+        return cursor.rowcount
+
     # ------------------------------------------------------------------
     # Dashboard queries
     # ------------------------------------------------------------------
@@ -1094,43 +1121,35 @@ class MuninnStore:
         if resolved is None:
             return []
 
-        # Collect all related memory IDs by walking the chain.
-        visited: set[str] = set()
-        queue = [resolved]
+        chain_rows = _rows_to_dicts(self._conn.execute(
+            """
+            WITH RECURSIVE chain(id) AS (
+                SELECT id FROM memories WHERE id = ?
+                UNION
+                SELECT m.id
+                FROM memories m
+                JOIN chain c ON m.superseded_by = c.id
+                UNION
+                SELECT m.superseded_by
+                FROM memories m
+                JOIN chain c ON m.id = c.id
+                WHERE m.superseded_by IS NOT NULL
+                  AND m.superseded_by != '_deleted'
+            )
+            SELECT DISTINCT id FROM chain
+            """,
+            (resolved,),
+        ))
+        chain_ids = [r["id"] for r in chain_rows]
 
-        while queue:
-            current = queue.pop()
-            if current in visited or current == "_deleted":
-                continue
-            visited.add(current)
-
-            row = _row_to_dict(self._conn.execute(
-                "SELECT id, superseded_by FROM memories WHERE id = ?",
-                (current,),
-            ))
-            if row is None:
-                continue
-
-            # Forward: this memory was superseded by another.
-            if row["superseded_by"] and row["superseded_by"] != "_deleted":
-                queue.append(row["superseded_by"])
-
-            # Backward: find memories that were superseded by this one.
-            back_rows = _rows_to_dicts(self._conn.execute(
-                "SELECT id FROM memories WHERE superseded_by = ?",
-                (current,),
-            ))
-            for br in back_rows:
-                queue.append(br["id"])
-
-        if not visited:
+        if not chain_ids:
             return []
 
         # Fetch full memory objects for all chain members.
-        placeholders = ",".join("?" for _ in visited)
+        placeholders = ",".join("?" for _ in chain_ids)
         rows = _rows_to_dicts(self._conn.execute(
             f"SELECT * FROM memories WHERE id IN ({placeholders}) ORDER BY created_at ASC",
-            tuple(visited),
+            tuple(chain_ids),
         ))
         mem_ids = [r["id"] for r in rows]
         tags_map = _fetch_tags_for_memories(self._conn, mem_ids)

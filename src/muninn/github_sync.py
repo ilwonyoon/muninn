@@ -247,8 +247,8 @@ def sync_github(
     )
 
     # Supersede old github memories.
-    for old_id in superseded_ids:
-        store.supersede_memory(old_id, new_memory.id)
+    if superseded_ids:
+        store.batch_supersede(superseded_ids, new_memory.id)
 
     return SyncResult(
         commits=commits,

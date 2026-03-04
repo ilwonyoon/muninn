@@ -373,17 +373,26 @@ export async function listMemories(
 }> {
   const client = await ensureInit();
 
-  let sql = `SELECT * FROM memories WHERE project_id = ? AND superseded_by IS NULL`;
+  let whereClause = `project_id = ? AND superseded_by IS NULL`;
   const args: InValue[] = [projectId];
 
   if (tags && tags.length > 0) {
     for (const tag of tags) {
-      sql += ` AND id IN (SELECT memory_id FROM memory_tags WHERE tag = ?)`;
+      whereClause += ` AND id IN (SELECT memory_id FROM memory_tags WHERE tag = ?)`;
       args.push(tag);
     }
   }
 
-  sql += ` ORDER BY updated_at DESC`;
+  const countResult = await client.execute({
+    sql: `SELECT COUNT(*) AS cnt FROM memories WHERE ${whereClause}`,
+    args,
+  });
+  const totalMatching = Number(countResult.rows[0]?.[0] ?? 0);
+
+  const sql = `SELECT * FROM memories
+    WHERE ${whereClause}
+    ORDER BY updated_at DESC
+    LIMIT 50`;
 
   const result = await client.execute({ sql, args });
   const rows = result.rows.map((row) => rowToObject(row, result.columns));
@@ -396,21 +405,21 @@ export async function listMemories(
   const budget = maxChars ?? Infinity;
   let charsLoaded = 0;
   let memoriesLoaded = 0;
-  let memoriesDropped = 0;
   const memories: Record<string, unknown>[] = [];
 
   for (const row of rows) {
     const content = (row.content as string) ?? "";
     const charCount = content.length;
     if (charsLoaded + charCount > budget) {
-      memoriesDropped++;
-      continue;
+      break;
     }
     charsLoaded += charCount;
     memoriesLoaded++;
     const rowTags = tagMap.get(row.id as string) ?? [];
     memories.push(memoryToDict(row, rowTags));
   }
+
+  const memoriesDropped = Math.max(totalMatching - memoriesLoaded, 0);
 
   return {
     memories,
@@ -576,7 +585,7 @@ export async function deleteMemory(id: string): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
-// 12. getSupersedChain (BFS graph traversal)
+// 12. getSupersedChain (recursive CTE traversal)
 // ---------------------------------------------------------------------------
 
 export async function getSupersedChain(
@@ -587,43 +596,27 @@ export async function getSupersedChain(
   const resolvedId = await resolveMemoryId(client, memoryId);
   if (!resolvedId) return [];
 
-  const visited = new Set<string>();
-  const queue: string[] = [resolvedId];
-  visited.add(resolvedId);
+  const chainResult = await client.execute({
+    sql: `WITH RECURSIVE chain(id) AS (
+            SELECT id FROM memories WHERE id = ?
+            UNION
+            SELECT m.id
+            FROM memories m
+            JOIN chain c ON m.superseded_by = c.id
+            UNION
+            SELECT m.superseded_by
+            FROM memories m
+            JOIN chain c ON m.id = c.id
+            WHERE m.superseded_by IS NOT NULL
+              AND m.superseded_by != '_deleted'
+          )
+          SELECT DISTINCT id FROM chain`,
+    args: [resolvedId],
+  });
 
-  while (queue.length > 0) {
-    const current = queue.shift()!;
+  const ids = chainResult.rows.map((row) => row[0] as string);
+  if (ids.length === 0) return [];
 
-    // Forward: what this memory supersedes
-    const forward = await client.execute({
-      sql: "SELECT superseded_by FROM memories WHERE id = ? AND superseded_by IS NOT NULL AND superseded_by != '_deleted'",
-      args: [current],
-    });
-    for (const row of forward.rows) {
-      const nextId = row[0] as string;
-      if (!visited.has(nextId)) {
-        visited.add(nextId);
-        queue.push(nextId);
-      }
-    }
-
-    // Backward: what supersedes this memory
-    const backward = await client.execute({
-      sql: "SELECT id FROM memories WHERE superseded_by = ?",
-      args: [current],
-    });
-    for (const row of backward.rows) {
-      const prevId = row[0] as string;
-      if (!visited.has(prevId)) {
-        visited.add(prevId);
-        queue.push(prevId);
-      }
-    }
-  }
-
-  if (visited.size === 0) return [];
-
-  const ids = Array.from(visited);
   const placeholders = ids.map(() => "?").join(", ");
   const result = await client.execute({
     sql: `SELECT * FROM memories WHERE id IN (${placeholders}) ORDER BY created_at ASC`,
