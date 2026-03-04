@@ -297,8 +297,14 @@ class MuninnStore:
 
         If TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are set, uses embedded
         replica mode (local file as read cache, Turso cloud as source of truth).
-        Otherwise, opens a plain local SQLite connection via libsql.
+
+        On metadata corruption ("db file exists but metadata file does not"),
+        automatically removes stale local files and retries from a fresh sync.
         """
+        import logging
+
+        log = logging.getLogger("muninn")
+
         if self._turso_url and self._turso_token:
             try:
                 conn = libsql.connect(
@@ -306,12 +312,26 @@ class MuninnStore:
                     sync_url=self._turso_url,
                     auth_token=self._turso_token,
                 )
-            except Exception as exc:
-                import logging
-                logging.getLogger("muninn").error(
-                    "Turso connection failed: %s", exc
-                )
-                raise
+            except (ValueError, Exception) as exc:
+                if "metadata" in str(exc).lower() or "invalid local state" in str(exc).lower():
+                    log.warning(
+                        "Turso metadata corruption detected, resetting local replica: %s", exc
+                    )
+                    self._reset_local_replica()
+                    try:
+                        conn = libsql.connect(
+                            self._db_path,
+                            sync_url=self._turso_url,
+                            auth_token=self._turso_token,
+                        )
+                    except Exception as retry_exc:
+                        log.error("Turso reconnect after reset failed: %s", retry_exc)
+                        log.warning("Falling back to local-only SQLite")
+                        conn = libsql.connect(self._db_path)
+                else:
+                    log.error("Turso connection failed: %s", exc)
+                    log.warning("Falling back to local-only SQLite")
+                    conn = libsql.connect(self._db_path)
         else:
             conn = libsql.connect(self._db_path)
 
@@ -319,35 +339,72 @@ class MuninnStore:
         conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
+    def _reset_local_replica(self) -> None:
+        """Remove local DB + metadata files so libsql can do a fresh sync."""
+        import logging
+        from pathlib import Path
+
+        log = logging.getLogger("muninn")
+        db = Path(self._db_path)
+        for suffix in ("", "-info", "-wal", "-shm"):
+            p = db.parent / (db.name + suffix)
+            if p.exists():
+                log.info("Removing stale replica file: %s", p)
+                p.unlink(missing_ok=True)
+
     def _sync_if_needed(self) -> None:
-        """Sync embedded replica for reads when cooldown has elapsed."""
+        """Sync embedded replica for reads when cooldown has elapsed.
+
+        Sync failures are logged but never block reads — stale local data
+        is always preferable to a 500 error.
+        """
         if not (self._turso_url and self._turso_token):
             return
         now = time.monotonic()
         if now - self._last_sync_time >= _SYNC_COOLDOWN:
-            self._do_sync()
+            try:
+                self._do_sync()
+            except Exception:
+                pass  # logged inside _do_sync; reads proceed with stale data
 
     def _sync_after_write(self) -> None:
-        """Sync embedded replica immediately after writes."""
+        """Sync embedded replica immediately after writes.
+
+        Failures are logged but do not raise — data is committed locally
+        and will sync on the next successful attempt.
+        """
         if not (self._turso_url and self._turso_token):
             return
-        self._do_sync()
+        try:
+            self._do_sync()
+        except Exception:
+            pass  # logged inside _do_sync; local commit is safe
 
     def _do_sync(self) -> None:
-        """Sync embedded replica and refresh connection once on failure."""
-        if self._turso_url and self._turso_token:
+        """Sync embedded replica and refresh connection once on failure.
+
+        If reconnect also fails, preserves the existing connection so
+        local reads/writes continue working.
+        """
+        import logging
+
+        log = logging.getLogger("muninn")
+        if not (self._turso_url and self._turso_token):
+            return
+        try:
+            self._conn.sync()
+            self._last_sync_time = time.monotonic()
+        except Exception as exc:
+            log.error("Turso sync failed: %s", exc)
+            old_conn = self._conn
             try:
+                self._conn = self._create_connection()
                 self._conn.sync()
                 self._last_sync_time = time.monotonic()
-            except Exception as exc:
-                import logging
-                logging.getLogger("muninn").error("Turso sync failed: %s", exc)
-                try:
-                    self._conn = self._create_connection()
-                    self._conn.sync()
-                    self._last_sync_time = time.monotonic()
-                except Exception:
-                    raise
+            except Exception as reconnect_exc:
+                log.error("Turso reconnect failed: %s", reconnect_exc)
+                self._conn = old_conn  # preserve existing connection
+                raise
 
     # ------------------------------------------------------------------
     # Migrations
