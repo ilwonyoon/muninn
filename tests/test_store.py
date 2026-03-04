@@ -167,6 +167,55 @@ class TestUpdateProject:
         assert updated.updated_at >= original.updated_at
 
 
+class TestGitHubProjectHelpers:
+    def test_set_github_repo_updates_project(self, store):
+        """set_github_repo updates the project's github_repo field."""
+        store.create_project(id="repo-set", name="Repo Set")
+
+        updated = store.set_github_repo("repo-set", "owner/repo")
+
+        assert updated is True
+        project = store.get_project("repo-set")
+        assert project is not None
+        assert project.github_repo == "owner/repo"
+
+    def test_set_github_repo_returns_false_when_project_missing(self, store):
+        """set_github_repo returns False when project does not exist."""
+        updated = store.set_github_repo("missing-proj", "owner/repo")
+        assert updated is False
+
+    def test_get_latest_sync_memory_returns_latest_github_sync(self, store):
+        """get_latest_sync_memory returns the newest non-superseded sync memory."""
+        store.create_project(id="sync-proj", name="Sync Project")
+        store.save_memory(
+            project_id="sync-proj",
+            content="Older GitHub sync",
+            source=MemorySource.GITHUB,
+            tags=["github-sync"],
+        )
+        time.sleep(0.01)
+        newest = store.save_memory(
+            project_id="sync-proj",
+            content="Newest GitHub sync",
+            source=MemorySource.GITHUB,
+            tags=["github-sync", "sync"],
+        )
+        time.sleep(0.01)
+        store.save_memory(
+            project_id="sync-proj",
+            content="Newer non-sync memory",
+            source=MemorySource.MANUAL,
+            tags=["note"],
+        )
+
+        latest = store.get_latest_sync_memory("sync-proj")
+
+        assert latest is not None
+        assert latest.id == newest.id
+        assert latest.content == "Newest GitHub sync"
+        assert "github-sync" in latest.tags
+
+
 # ---------------------------------------------------------------------------
 # Memory CRUD
 # ---------------------------------------------------------------------------
@@ -897,12 +946,12 @@ class TestSearchProjects:
         assert len(results) == 1
         assert results[0].id == "sp-ci"
 
-    def test_search_excludes_null_summaries(self, store):
-        """search_projects does not return projects with null summaries."""
+    def test_search_excludes_non_matching_null_summaries(self, store):
+        """Null summary projects are not matched when the name also does not match."""
         store.create_project(id="sp-null", name="Null")
         # no summary set
 
-        results = store.search_projects("Null")
+        results = store.search_projects("unrelated_keyword")
 
         assert len(results) == 0
 
@@ -935,6 +984,56 @@ class TestSearchProjects:
         results = store.search_projects("widgets", limit=2)
 
         assert len(results) <= 2
+
+    def test_search_matches_project_name(self, store):
+        """search_projects matches against project name, not only summary."""
+        store.create_project(id="sp-name", name="Auth Service")
+
+        results = store.search_projects("auth")
+
+        assert len(results) == 1
+        assert results[0].id == "sp-name"
+
+    def test_search_multi_term_implicit_and(self, store):
+        """Multi-term queries require both terms (FTS5 implicit AND)."""
+        store.create_project(id="sp-both", name="Both")
+        store.create_project(id="sp-one", name="One")
+        store.update_project("sp-both", summary="Implements auth with oauth flows")
+        store.update_project("sp-one", summary="Implements auth only")
+
+        results = store.search_projects("auth oauth")
+
+        ids = {p.id for p in results}
+        assert ids == {"sp-both"}
+
+    def test_search_excludes_archived_projects(self, store):
+        """Archived projects are excluded from search results."""
+        store.create_project(id="sp-active", name="Active")
+        store.create_project(id="sp-archived", name="Archived")
+        store.update_project("sp-active", summary="auth oauth implementation")
+        store.update_project("sp-archived", summary="auth oauth implementation", status="archived")
+
+        results = store.search_projects("auth oauth")
+
+        ids = {p.id for p in results}
+        assert "sp-active" in ids
+        assert "sp-archived" not in ids
+
+    def test_search_rebuild_reindexes_existing_projects(self, tmp_path):
+        """Startup rebuild repopulates projects_fts for pre-existing rows."""
+        db_path = str(tmp_path / "fts-rebuild.db")
+        store = MuninnStore(db_path=db_path)
+        store.create_project(id="sp-rebuild", name="Rebuild")
+        store.update_project("sp-rebuild", summary="auth oauth setup")
+
+        store._conn.execute("DELETE FROM projects_fts")
+        store._conn.commit()
+        assert store.search_projects("auth") == []
+
+        reloaded = MuninnStore(db_path=db_path)
+        results = reloaded.search_projects("auth")
+
+        assert any(p.id == "sp-rebuild" for p in results)
 
 
 # ---------------------------------------------------------------------------
@@ -988,3 +1087,18 @@ class TestResetData:
         project = store.get_project("reset-rev")
         assert project is not None
         assert project.summary == "Fresh start"
+
+
+# ---------------------------------------------------------------------------
+# Instructions
+# ---------------------------------------------------------------------------
+
+class TestInstructions:
+    def test_get_instructions_empty_by_default(self, store):
+        """get_instructions returns empty string when none is set."""
+        assert store.get_instructions() == ""
+
+    def test_update_instructions_persists(self, store):
+        """update_instructions stores and returns latest content."""
+        store.update_instructions("Use project documents.")
+        assert store.get_instructions() == "Use project documents."

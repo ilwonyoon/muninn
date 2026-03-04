@@ -55,31 +55,6 @@ export default function SettingsPage() {
           </p>
         </div>
 
-        {/* Keyboard shortcuts */}
-        <div className="rounded-lg border border-border bg-card p-4">
-          <h2 className="text-sm font-medium text-foreground">
-            Keyboard Shortcuts
-          </h2>
-          <div className="mt-3 space-y-2 text-xs">
-            {[
-              ["Cmd+K", "Command palette"],
-              ["j / k", "Navigate memory list"],
-              ["Enter", "Open selected memory"],
-              ["n", "New memory (on project page)"],
-              ["e", "Edit memory (on detail page)"],
-              ["d", "Delete selected memory"],
-              ["Esc", "Deselect / close"],
-            ].map(([key, desc]) => (
-              <div key={key} className="flex items-center justify-between">
-                <span className="text-muted">{desc}</span>
-                <kbd className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted">
-                  {key}
-                </kbd>
-              </div>
-            ))}
-          </div>
-        </div>
-
         {/* About */}
         <div className="rounded-lg border border-border bg-card p-4">
           <h2 className="text-sm font-medium text-foreground">About</h2>

@@ -112,11 +112,7 @@ export function CommandPalette() {
                   <Command.Item
                     key={mem.id}
                     value={`memory-${mem.id}`}
-                    onSelect={() =>
-                      navigate(
-                        `/projects/${mem.project_id}/${mem.short_id}`
-                      )
-                    }
+                    onSelect={() => navigate(`/projects/${mem.project_id}`)}
                     className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-xs text-foreground aria-selected:bg-card-hover"
                   >
                     <Brain className="h-3.5 w-3.5 shrink-0 text-muted" />

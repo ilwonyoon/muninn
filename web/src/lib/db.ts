@@ -231,12 +231,17 @@ export async function updateProject(
     const existing = await getProject(id);
     if (existing && existing.summary != null) {
       await client.execute({
-        sql: "DELETE FROM project_summary_revisions WHERE project_id = ?",
-        args: [id],
-      });
-      await client.execute({
         sql: "INSERT INTO project_summary_revisions (project_id, summary) VALUES (?, ?)",
         args: [id, existing.summary as string],
+      });
+      await client.execute({
+        sql: `DELETE FROM project_summary_revisions
+              WHERE project_id = ? AND id NOT IN (
+                SELECT id FROM project_summary_revisions
+                WHERE project_id = ?
+                ORDER BY created_at DESC LIMIT 10
+              )`,
+        args: [id, id],
       });
     }
   }
@@ -325,21 +330,19 @@ export async function deleteProject(id: string): Promise<boolean> {
 
 export async function getSummaryRevision(
   projectId: string
-): Promise<{ previous_summary: string; updated_at: string } | null> {
+): Promise<{ previous_summary: string; updated_at: string }[]> {
   const client = await ensureInit();
 
   const result = await client.execute({
     sql: `SELECT summary, created_at FROM project_summary_revisions
-          WHERE project_id = ? ORDER BY created_at DESC LIMIT 1`,
+          WHERE project_id = ? ORDER BY created_at DESC LIMIT 10`,
     args: [projectId],
   });
 
-  if (result.rows.length === 0) return null;
-
-  return {
-    previous_summary: result.rows[0][0] as string,
-    updated_at: result.rows[0][1] as string,
-  };
+  return result.rows.map((row) => ({
+    previous_summary: row[0] as string,
+    updated_at: row[1] as string,
+  }));
 }
 
 // ---------------------------------------------------------------------------

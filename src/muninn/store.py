@@ -80,6 +80,24 @@ _SCHEMA_STATEMENTS = [
         INSERT INTO memories_fts(memories_fts, rowid, content, title) VALUES('delete', old.rowid, old.content, old.title);
         INSERT INTO memories_fts(rowid, content, title) VALUES (new.rowid, new.content, new.title);
     END""",
+    """CREATE VIRTUAL TABLE IF NOT EXISTS projects_fts USING fts5(
+        name,
+        summary,
+        content=projects,
+        content_rowid=rowid
+    )""",
+    # Project FTS sync triggers
+    """CREATE TRIGGER IF NOT EXISTS projects_ai AFTER INSERT ON projects BEGIN
+        INSERT INTO projects_fts(rowid, name, summary) VALUES (new.rowid, new.name, new.summary);
+    END""",
+    """CREATE TRIGGER IF NOT EXISTS projects_ad AFTER DELETE ON projects BEGIN
+        INSERT INTO projects_fts(projects_fts, rowid, name, summary) VALUES('delete', old.rowid, old.name, old.summary);
+    END""",
+    """CREATE TRIGGER IF NOT EXISTS projects_au AFTER UPDATE ON projects BEGIN
+        INSERT INTO projects_fts(projects_fts, rowid, name, summary) VALUES('delete', old.rowid, old.name, old.summary);
+        INSERT INTO projects_fts(rowid, name, summary) VALUES (new.rowid, new.name, new.summary);
+    END""",
+    "INSERT INTO projects_fts(projects_fts) VALUES('rebuild')",
     """CREATE TABLE IF NOT EXISTS schema_version (
         version INTEGER PRIMARY KEY,
         applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -167,6 +185,7 @@ def _row_to_project(row: dict[str, Any], *, memory_count: int = 0) -> Project:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         memory_count=memory_count,
+        search_snippet=row["search_snippet"] if "search_snippet" in keys else None,
     )
 
 
@@ -241,12 +260,26 @@ class MuninnStore:
         self._conn = self._create_connection()
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
-        _execute_statements(self._conn, _SCHEMA_STATEMENTS)
-        try:
-            self._run_migrations(self._conn)
-        except Exception as exc:
-            raise RuntimeError("Schema migration failed") from exc
-        self._conn.commit()
+
+        for attempt in range(5):
+            try:
+                _execute_statements(self._conn, _SCHEMA_STATEMENTS)
+                try:
+                    self._run_migrations(self._conn)
+                except Exception as exc:
+                    raise RuntimeError("Schema migration failed") from exc
+                self._conn.commit()
+                break
+            except Exception as exc:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass
+                if "locked" in str(exc).lower() and attempt < 4:
+                    time.sleep(0.05 * (attempt + 1))
+                    continue
+                raise
+
         self._do_sync()
 
     # ------------------------------------------------------------------
@@ -595,12 +628,19 @@ class MuninnStore:
                 ))
                 if old_row is not None and old_row["summary"] is not None:
                     self._conn.execute(
-                        "DELETE FROM project_summary_revisions WHERE project_id = ?",
-                        (id,),
-                    )
-                    self._conn.execute(
                         "INSERT INTO project_summary_revisions (project_id, summary) VALUES (?, ?)",
                         (id, old_row["summary"]),
+                    )
+                    self._conn.execute(
+                        """
+                        DELETE FROM project_summary_revisions
+                        WHERE project_id = ? AND id NOT IN (
+                            SELECT id FROM project_summary_revisions
+                            WHERE project_id = ?
+                            ORDER BY created_at DESC LIMIT 10
+                        )
+                        """,
+                        (id, id),
                     )
 
             cursor = self._conn.execute(
@@ -619,6 +659,19 @@ class MuninnStore:
         if project is None:
             raise ValueError(f"Project {id!r} not found after update")
         return project
+
+    def set_github_repo(self, project_id: str, repo: str) -> bool:
+        """Set the ``github_repo`` field for a project.
+
+        Returns ``True`` if a project was updated, otherwise ``False``.
+        """
+        cursor = self._conn.execute(
+            "UPDATE projects SET github_repo = ? WHERE id = ?",
+            (repo, project_id),
+        )
+        self._conn.commit()
+        self._sync_after_write()
+        return cursor.rowcount > 0
 
     def delete_project(self, id: str) -> bool:
         """Delete a project and all associated data.
@@ -688,6 +741,105 @@ class MuninnStore:
         self._sync_after_write()
 
     # ------------------------------------------------------------------
+    # Instructions
+    # ------------------------------------------------------------------
+
+    def _instructions_storage_mode(self, *, create_if_missing: bool) -> str:
+        """Return the storage mode for the instructions table.
+
+        Supports two schemas:
+          - key/value (dashboard schema, key='global')
+          - id/content (legacy single-row schema)
+        """
+        rows = self._conn.execute("PRAGMA table_info(instructions)").fetchall()
+        columns = {row[1] for row in rows}
+
+        if not columns:
+            if not create_if_missing:
+                return "missing"
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS instructions (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL DEFAULT '',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            self._conn.execute(
+                "INSERT OR IGNORE INTO instructions (key, value) VALUES ('global', '')"
+            )
+            return "key_value"
+
+        if {"key", "value"}.issubset(columns):
+            return "key_value"
+        if {"id", "content"}.issubset(columns):
+            return "id_content"
+        return "unknown"
+
+    def get_instructions(self) -> str:
+        """Get instructions from DB. Returns empty string if none."""
+        self._sync_if_needed()
+        mode = self._instructions_storage_mode(create_if_missing=False)
+
+        if mode == "missing":
+            return ""
+        if mode == "key_value":
+            row = self._conn.execute(
+                "SELECT value FROM instructions WHERE key = 'global' LIMIT 1"
+            ).fetchone()
+            return str(row[0]) if row and row[0] is not None else ""
+        if mode == "id_content":
+            row = self._conn.execute(
+                "SELECT content FROM instructions ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            return str(row[0]) if row and row[0] is not None else ""
+        raise RuntimeError("Unsupported instructions table schema")
+
+    def update_instructions(self, content: str) -> None:
+        """Update instructions in DB (upsert)."""
+        mode = self._instructions_storage_mode(create_if_missing=True)
+        now = _now_iso()
+
+        if mode == "key_value":
+            self._conn.execute(
+                """
+                INSERT INTO instructions (key, value, updated_at)
+                VALUES ('global', ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                (content, now),
+            )
+        elif mode == "id_content":
+            existing = self._conn.execute(
+                "SELECT id FROM instructions LIMIT 1"
+            ).fetchone()
+            if existing:
+                self._conn.execute(
+                    """
+                    UPDATE instructions
+                    SET content = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (content, now, existing[0]),
+                )
+            else:
+                self._conn.execute(
+                    """
+                    INSERT INTO instructions (content, updated_at)
+                    VALUES (?, ?)
+                    """,
+                    (content, now),
+                )
+        else:
+            raise RuntimeError("Unsupported instructions table schema")
+
+        self._conn.commit()
+        self._sync_after_write()
+
+    # ------------------------------------------------------------------
     # Memory operations
     # ------------------------------------------------------------------
 
@@ -712,30 +864,38 @@ class MuninnStore:
         now = _now_iso()
         tag_list = validate_tags(tags)
 
-        self._conn.execute("BEGIN")
-        try:
-            self._conn.execute(
-                """
-                INSERT INTO memories (id, project_id, content, depth, source, category, parent_memory_id, title, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (memory_id, project_id, content, 1, source, 'status', None, None, now, now),
-            )
+        for attempt in range(5):
+            try:
+                self._conn.execute("BEGIN")
+                try:
+                    self._conn.execute(
+                        """
+                        INSERT INTO memories (id, project_id, content, depth, source, category, parent_memory_id, title, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (memory_id, project_id, content, 1, source, 'status', None, None, now, now),
+                    )
 
-            for tag in tag_list:
-                self._conn.execute(
-                    "INSERT INTO memory_tags (memory_id, tag) VALUES (?, ?)",
-                    (memory_id, tag),
-                )
+                    for tag in tag_list:
+                        self._conn.execute(
+                            "INSERT INTO memory_tags (memory_id, tag) VALUES (?, ?)",
+                            (memory_id, tag),
+                        )
 
-            self._conn.execute(
-                "UPDATE projects SET updated_at = ? WHERE id = ?",
-                (now, project_id),
-            )
-            self._conn.commit()
-        except:
-            self._conn.rollback()
-            raise
+                    self._conn.execute(
+                        "UPDATE projects SET updated_at = ? WHERE id = ?",
+                        (now, project_id),
+                    )
+                    self._conn.commit()
+                    break
+                except:
+                    self._conn.rollback()
+                    raise
+            except Exception as exc:
+                if "locked" in str(exc).lower() and attempt < 4:
+                    time.sleep(0.05 * (attempt + 1))
+                    continue
+                raise
         self._sync_after_write()
 
         return Memory(
@@ -753,6 +913,35 @@ class MuninnStore:
             created_at=now,
             updated_at=now,
         )
+
+    def get_latest_sync_memory(self, project_id: str) -> Memory | None:
+        """Get the most recent active GitHub sync memory for a project."""
+        self._sync_if_needed()
+        row = _row_to_dict(self._conn.execute(
+            """
+            SELECT m.*, GROUP_CONCAT(mt.tag) AS tags
+            FROM memories m
+            LEFT JOIN memory_tags mt ON m.id = mt.memory_id
+            WHERE m.project_id = ?
+              AND m.superseded_by IS NULL
+              AND EXISTS (
+                  SELECT 1
+                  FROM memory_tags mt2
+                  WHERE mt2.memory_id = m.id
+                    AND mt2.tag = 'github-sync'
+              )
+            GROUP BY m.id
+            ORDER BY m.updated_at DESC
+            LIMIT 1
+            """,
+            (project_id,),
+        ))
+        if row is None:
+            return None
+
+        tags_raw = row.get("tags")
+        tags = tuple(sorted({tag for tag in tags_raw.split(",") if tag})) if tags_raw else ()
+        return _row_to_memory(row, tags=tags)
 
     def recall(
         self,
@@ -1160,24 +1349,28 @@ class MuninnStore:
         ]
 
     def search_projects(self, query: str, limit: int = 20) -> list[Project]:
-        """Search project documents (summaries) by keyword.
-
-        Case-insensitive LIKE search on projects.summary.
-        Only returns projects that have a non-null summary.
-        """
+        """Search non-archived projects by FTS5 over name + summary."""
         self._sync_if_needed()
+        terms = [term for term in query.split() if term.strip()]
+        if not terms:
+            return []
+        safe_query = " ".join(
+            '"' + term.replace('"', '""') + '"' for term in terms
+        )
         rows = _rows_to_dicts(self._conn.execute(
             """
             SELECT p.*,
+                   snippet(projects_fts, -1, '[', ']', '...', 20) AS search_snippet,
                    (SELECT COUNT(*) FROM memories m
                     WHERE m.project_id = p.id AND m.superseded_by IS NULL) AS memory_count
             FROM projects p
-            WHERE p.summary IS NOT NULL
-              AND LOWER(p.summary) LIKE LOWER(?)
-            ORDER BY p.updated_at DESC
+            JOIN projects_fts pf ON p.rowid = pf.rowid
+            WHERE projects_fts MATCH ?
+              AND p.status != 'archived'
+            ORDER BY pf.rank
             LIMIT ?
             """,
-            (f"%{query}%", limit),
+            (safe_query, limit),
         ))
         return [
             _row_to_project(r, memory_count=r["memory_count"]) for r in rows

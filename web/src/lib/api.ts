@@ -139,7 +139,7 @@ export function getStats(): Promise<DashboardStats> {
 
 export function getSummaryRevision(
   projectId: string
-): Promise<{ previous_summary: string; updated_at: string } | null> {
+): Promise<{ previous_summary: string; updated_at: string }[]> {
   return fetchJSON(`/projects/${projectId}/summary-revision`);
 }
 

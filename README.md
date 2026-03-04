@@ -6,63 +6,123 @@
 
 > *"Odin feared losing Muninn more than Huginn — losing memory is worse than losing thought."*
 
-**Cross-tool project memory for AI assistants.** Muninn (MOO-nin, Odin's raven of memory) is an MCP server that gives Claude, ChatGPT, Cursor, and other AI tools shared, persistent, project-structured memory.
+Muninn is a personal MCP memory server for cross-client project continuity.
 
-## The Problem
+It is **document-first**: each project has one structured markdown document
+stored in `projects.summary`, and MCP tools save/recall/search those project
+documents directly.
 
-Every tool switch = context reset. Every session = re-explanation from scratch.
+**Primary clients:** Claude Code CLI, Claude Desktop, ChatGPT Mac App, Codex CLI
 
-- 2 hours brainstorming in Claude Desktop → switch to Claude Code → blank slate
-- Research in ChatGPT → switch to Cursor → copy-paste everything
-- Come back tomorrow → "this project is X, tech stack is Y, we're at Z..." again
+## 5-Minute Quickstart
 
-## How Muninn Solves It
-
-```
-Save in Claude Desktop    →  "Save this to ouri-app"
-Switch to Claude Code     →  muninn_recall("ouri-app") → full context loaded
-Research in ChatGPT       →  "Save findings to ouri-app"
-Come back next week       →  Everything remembered
-```
-
-Zero copy-paste. Zero re-explanation. Works across any MCP-compatible tool.
-
----
-
-## Quick Start
-
-### Install
+### 1) Install
 
 ```bash
-# From PyPI (recommended)
-pip install muninn-mcp            # basic (stdio only)
-pip install muninn-mcp[http]      # with HTTP transport
-pip install muninn-mcp[semantic]  # with semantic search (~200MB model)
-pip install muninn-mcp[all]       # everything
-
-# Or use uvx (no install needed)
-uvx muninn-mcp
+pip install muninn-mcp
 ```
 
----
+Optional extras:
 
-## Client Setup
+```bash
+pip install "muninn-mcp[http]"    # HTTP transport support
+pip install "muninn-mcp[github]"  # GitHub sync dependencies
+pip install "muninn-mcp[all]"     # all optional deps
+```
 
-### Claude Code
+### 2) Configure one client (Claude Code example)
 
 ```bash
 claude mcp add muninn -- uvx muninn-mcp
 ```
 
-Or with a local install:
+If you prefer local Python instead of `uvx`:
 
 ```bash
-claude mcp add muninn -- python -m muninn.server
+claude mcp add muninn -- muninn
+```
+
+### 3) First save (must be structured markdown)
+
+In the client chat, send:
+
+```text
+Save this to project "muninn-demo":
+
+# Muninn Demo
+
+## Overview
+Personal MCP memory server for project continuity across tools.
+
+## Key Decisions
+- Use project-level markdown one-pager, not atomic memory writes.
+
+## Current Status
+- Initial setup complete.
+
+## Open Questions
+- What sections should be mandatory in every project document?
+```
+
+`muninn_save` rejects plain text without `##` headers.
+
+### 4) Recall it
+
+Ask:
+
+```text
+Recall muninn-demo
+```
+
+You should get the saved project document back.
+
+## Current Architecture
+
+- **Document-first MCP model:** `muninn_save` replaces the entire
+  `projects.summary` document for a project.
+- **6 MCP tools:** `muninn_save`, `muninn_recall`, `muninn_search`,
+  `muninn_status`, `muninn_manage`, `muninn_sync`.
+- **Search is keyword-only:** no semantic/vector search path in MCP tools.
+- **Storage:** SQLite/libSQL with WAL mode; FTS5 tables are present in schema.
+- **Transport:** stdio (default) and streamable HTTP.
+- **Dashboard:** Next.js + React + Tailwind app in `web/` (localhost workflow).
+
+## MCP Tools Reference (Actual Signatures)
+
+| Tool | Signature | Behavior |
+|------|-----------|----------|
+| `muninn_save` | `muninn_save(project: str, content: str) -> str` | Save or replace a project's markdown document. Auto-creates project if missing. Requires markdown with `##` headers. |
+| `muninn_recall` | `muninn_recall(project: str \| None = None) -> str` | Recall one project's document, or all **active** project documents when `project` is omitted. |
+| `muninn_search` | `muninn_search(query: str) -> str` | Keyword search across project documents. |
+| `muninn_status` | `muninn_status() -> str` | Status overview of projects. |
+| `muninn_manage` | `muninn_manage(action: Literal["set_status", "create_project", "delete_project"], project: str, status: str \| None = None, value: str \| None = None) -> str` | Manage project lifecycle. |
+| `muninn_sync` | `muninn_sync(project: str) -> str` | Sync linked GitHub repo (commits/issues/PRs) into memory for that project. |
+
+### `muninn_manage` actions
+
+| Action | Required | Notes |
+|--------|----------|-------|
+| `set_status` | `project`, `status` | `status` must be one of `active`, `paused`, `idea`, `archived`. |
+| `create_project` | `project` | Optional `value` sets display name. |
+| `delete_project` | `project` | Irreversible delete of project and its data. |
+
+### `muninn_sync` prerequisites
+
+- Project must exist.
+- Project must have `github_repo` set (via dashboard or REST API).
+- `GITHUB_TOKEN` is recommended for private repos and rate limits.
+
+## Client Configuration Examples
+
+### Claude Code CLI
+
+```bash
+claude mcp add muninn -- uvx muninn-mcp
 ```
 
 ### Claude Desktop
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+`~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
@@ -75,238 +135,102 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 }
 ```
 
-Restart Claude Desktop. Start saving memories.
-
-### Cursor
-
-Add to `.cursor/mcp.json` in your project (or `~/.cursor/mcp.json` globally):
-
-```json
-{
-  "mcpServers": {
-    "muninn": {
-      "command": "uvx",
-      "args": ["muninn-mcp"]
-    }
-  }
-}
-```
-
-### claude.ai / Claude iPhone (Remote)
-
-Claude Web and the iPhone app require an HTTP server with OAuth. See [Remote Access — OAuth](#oauth-for-claudeai--iphone) below.
-
-### ChatGPT
-
-ChatGPT requires an HTTP endpoint. See [Remote Access — Bearer Token](#bearer-token-for-chatgpt--direct-api) below, then add the URL as a custom connector in ChatGPT settings.
-
----
-
-## Remote Access (HTTP Transport)
-
-### Basic (local dev only — no auth)
+### Codex CLI
 
 ```bash
+codex mcp add muninn -- uvx muninn-mcp
+codex mcp list
+```
+
+### ChatGPT Mac App (HTTP connector)
+
+1. Start Muninn in HTTP mode:
+
+```bash
+MUNINN_API_KEY=your-secret-key muninn --transport http --host 127.0.0.1 --port 8000
+```
+
+2. In ChatGPT Mac App, add a custom MCP connector to:
+
+```text
+http://127.0.0.1:8000/
+```
+
+3. Use bearer auth with the same key.
+
+For remote/public access, run with a public URL and appropriate auth settings.
+
+## Running The Server
+
+```bash
+# stdio (default)
+muninn
+
+# HTTP
+muninn --transport http --host 127.0.0.1 --port 8000
+
+# HTTP with public URL (OAuth issuer host)
+muninn --transport http --host 0.0.0.0 --port 8000 --public-url https://your-domain.example
+
+# Reset data and instructions file
+muninn --reset
+```
+
+HTTP auth mode priority:
+
+1. `MUNINN_OWNER_PASSWORD` → OAuth 2.0
+2. `MUNINN_API_KEY` → Bearer token
+3. Neither set → no auth (local dev only)
+
+## Dashboard (Localhost)
+
+```bash
+# terminal 1: Muninn server
 muninn --transport http --port 8000
-# Endpoint: http://localhost:8000/
+
+# terminal 2: dashboard
+cd web
+npm install
+npm run dev
 ```
 
-### OAuth (for claude.ai / iPhone)
+Open `http://localhost:3000`.
 
-OAuth lets claude.ai and the Claude iPhone app connect to your Muninn instance. You set a PIN; Claude prompts users to enter it on first connection.
+## Data & Environment
 
-**Step 1 — Expose a public URL with ngrok:**
-
-```bash
-# Install ngrok: https://ngrok.com/download
-ngrok http 8000
-# Copy the HTTPS URL, e.g. https://abc123.ngrok-free.app
-```
-
-**Step 2 — Start Muninn with OAuth:**
-
-```bash
-MUNINN_OWNER_PASSWORD=yourpin muninn \
-  --transport http \
-  --host 0.0.0.0 \
-  --port 8000 \
-  --public-url https://abc123.ngrok-free.app
-```
-
-**Step 3 — Add to claude.ai:**
-
-In Claude settings → Integrations → Add MCP server → enter `https://abc123.ngrok-free.app`. Claude will prompt for your PIN on first authorization.
-
-### Bearer Token (for ChatGPT / direct API)
-
-```bash
-MUNINN_API_KEY=your-secret-key muninn \
-  --transport http \
-  --host 0.0.0.0 \
-  --port 8000
-```
-
-Clients send `Authorization: Bearer your-secret-key` with each request. Use ngrok (same as above) to expose publicly.
-
-### Auth Mode Priority
-
-| Priority | Env Var | Auth Type | Use For |
-|----------|---------|-----------|---------|
-| 1 | `MUNINN_OWNER_PASSWORD` | OAuth 2.0 | claude.ai, iPhone |
-| 2 | `MUNINN_API_KEY` | Bearer token | ChatGPT, direct API |
-| 3 | (neither) | None | Local dev only |
-
----
-
-## Tools Reference
-
-| Tool | Purpose | Key Parameters |
-|------|---------|----------------|
-| `muninn_save` | Save a memory to a project | `project`, `content`, `depth` (0-3), `tags` |
-| `muninn_recall` | Load project context | `project`, `depth` (default 1), `max_chars` (default 8000), `tags` |
-| `muninn_search` | Full-text + semantic search across all memories | `query`, `project`, `tags`, `limit`, `semantic` |
-| `muninn_status` | List all projects with memory counts | — |
-| `muninn_manage` | Delete/update memories, manage projects | `action`, `project`, `memory_id`, `field`, `value` |
-
-### `muninn_manage` Actions
-
-| Action | What It Does | Required Params |
-|--------|-------------|-----------------|
-| `set_status` | Set project status (active/paused/idea/archived) | `project`, `status` |
-| `delete_memory` | Remove a memory by ID | `project`, `memory_id` |
-| `update_memory` | Edit content, depth, or tags of a memory | `project`, `memory_id`, `field`, `value` |
-| `update_project` | Update name, summary, or github_repo | `project`, `field`, `value` |
-| `create_project` | Explicitly create a project | `project` |
-
----
-
-## Depth System
-
-Muninn uses a 4-level depth system that works for any project type — app, research, content, etc.
-
-| Depth | Question | Use For |
-|-------|----------|---------|
-| 0 | "What is this?" | 10-second project overview. Always loaded on recall. Create this first. |
-| 1 | "To continue" | Resume work next session. Key decisions, current state. (default) |
-| 2 | "To go deeper" | Detailed analysis, specs, research. Loaded on request. |
-| 3 | "Just in case" | Archive, raw data, logs. Rarely loaded. |
-
-```
-muninn_recall(depth=0)  →  Project summaries only (~500 chars)
-muninn_recall(depth=1)  →  Above + working context (default)
-muninn_recall(depth=2)  →  Above + deep details
-muninn_recall(depth=3)  →  Everything
-```
-
-**Best practice:** Always create a `depth=0` summary first for every new project. Keep `depth=0` and `depth=1` memories short (200–500 chars), one topic each.
-
----
-
-## Example Usage
-
-In any AI tool connected to Muninn:
-
-```
-User: "Save this to ouri-app: voice journaling app for Korean millennials,
-       React Native + Whisper API, freemium model"
-
-→ muninn_save(project="ouri-app", content="...", depth=0)
-→ Saved to ouri-app (memory: a1b2c3d4)
-```
-
-```
-User: "What are my projects?"
-
-→ muninn_status()
-→ ouri-app    active  today       memories: 9
-   muninn     active  today       memories: 15
-   glpuri     paused  2 weeks ago memories: 23
-```
-
-```
-User: "Load ouri-app context"
-
-→ muninn_recall(project="ouri-app")
-→ ## ouri-app (active)
-  - [summary] (a1b2c3d4) Voice journaling app for Korean millennials...
-  - [context] (b2c3d4e5) Tech stack: React Native + Whisper API...
-  - [context] (c3d4e5f6) Revenue model: freemium with 5min/day limit...
-  Context: 2,341 / 8,000 chars | 9 memories loaded
-```
-
----
-
-## Semantic Search (Optional)
-
-When keyword search misses related memories (e.g. searching "login" doesn't find "OAuth authentication flow"), semantic search finds them by meaning similarity.
-
-```bash
-pip install muninn-mcp[semantic]   # adds fastembed + bge-small-en-v1.5 (~200MB)
-```
-
-**How it works:**
-- Embeddings are generated automatically on `muninn_save` and `muninn_manage(update_memory)`
-- `muninn_search` tries FTS5 keyword search first. If no results, falls back to semantic search automatically
-- Use `semantic=True` to skip FTS5 and search by meaning only
-- Existing memories are backfilled on first semantic search
-
-**Without `[semantic]` installed:** Everything works exactly the same — FTS5 keyword search only, no errors.
-
----
-
-## Data Storage
-
-```
-Default: ~/.local/share/muninn/muninn.db
-Override: MUNINN_DB_PATH=/path/to/custom.db
-```
-
-SQLite with WAL mode. Single file. Back up with `cp muninn.db muninn.db.bak`.
-
----
-
-## Platform Support
-
-| Platform | Transport | Auth | Status |
-|----------|-----------|------|--------|
-| Claude Desktop (Mac) | stdio | — | Working |
-| Claude Code | stdio | — | Working |
-| Cursor | stdio | — | Working |
-| claude.ai / iPhone | HTTP | OAuth (`MUNINN_OWNER_PASSWORD`) | Working (needs public URL) |
-| ChatGPT Web | HTTP | Bearer (`MUNINN_API_KEY`) | Working (needs public URL) |
-| ChatGPT Mac | — | — | No MCP support yet |
-
----
+- Default DB path: `~/.local/share/muninn/muninn.db`
+- Override DB path: `MUNINN_DB_PATH=/path/to/muninn.db`
+- OAuth PIN auth: `MUNINN_OWNER_PASSWORD`
+- Bearer auth: `MUNINN_API_KEY`
+- GitHub sync auth: `GITHUB_TOKEN`
+- Optional Turso embedded replica: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`
 
 ## Development
 
 ```bash
-# Install with dev deps
+# Install dev deps
 pip install -e ".[dev]"
 
-# Run tests (239 tests)
+# Run tests
 python -m pytest tests/ -v
 
-# Run the server (stdio)
+# Run server module directly
 python -m muninn.server
-
-# Run the server (HTTP)
 python -m muninn.server --transport http --port 8000
 ```
 
 ## Architecture
 
-```
+```text
 src/muninn/
-  server.py          # MCP entry point (stdio + HTTP), CLI args
-  auth.py            # Bearer token auth middleware
-  oauth_provider.py  # OAuth 2.0 provider (PIN-based)
-  oauth_login.py     # OAuth login routes
-  tools.py           # 6 MCP tool functions
-  store.py           # SQLite with FTS5 + semantic search
-  models.py          # Frozen dataclasses
-  formatter.py       # LLM-readable output formatting
-  embedder.py        # Embedding engine (fastembed, graceful degradation)
+  server.py       # FastMCP entry point (stdio + HTTP, CLI args)
+  tools.py        # 6 MCP tool functions (document-first)
+  store.py        # SQLite/libSQL store, WAL, FTS5 tables
+  formatter.py    # LLM-readable formatter output
+  models.py       # Dataclasses and validation
+  auth.py         # Bearer middleware (HTTP)
+  api.py          # Dashboard REST routes
+  github_sync.py  # GitHub commits/issues/PR sync
 ```
 
 ## License

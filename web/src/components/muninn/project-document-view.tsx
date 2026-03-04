@@ -27,10 +27,11 @@ export function ProjectDocumentView({ project, onUpdated }: ProjectDocumentViewP
 
     let cancelled = false;
     getSummaryRevision(project.id)
-      .then((revision) => {
+      .then((revisions) => {
         if (cancelled) return;
-        if (revision && revision.previous_summary) {
-          const changed = getChangedParagraphs(project.summary!, revision.previous_summary);
+        const latestRevision = revisions[0];
+        if (latestRevision && latestRevision.previous_summary) {
+          const changed = getChangedParagraphs(project.summary!, latestRevision.previous_summary);
           setChangedParagraphs(changed.size > 0 ? changed : null);
         } else {
           setChangedParagraphs(null);

@@ -8,6 +8,7 @@ import os
 import pytest
 
 import muninn.tools as tools_module
+from muninn.models import MemorySource
 from muninn.tools import (
     _get_store,
     init_store,
@@ -174,6 +175,23 @@ class TestMuninnRecall:
         assert "Error" in result
         assert "not found" in result
 
+    def test_recall_includes_latest_github_activity(self, initialized_store):
+        """Recall appends latest GitHub sync content to the document."""
+        initialized_store.create_project(id="sync-doc", name="Sync Doc")
+        initialized_store.update_project("sync-doc", summary="## Overview\nBase document")
+        initialized_store.save_memory(
+            project_id="sync-doc",
+            content="GitHub sync summary content",
+            source=MemorySource.GITHUB,
+            tags=["github-sync"],
+        )
+
+        result = muninn_recall(project="sync-doc")
+
+        assert "## Overview\nBase document" in result
+        assert "## GitHub Activity" in result
+        assert "GitHub sync summary content" in result
+
 
 # ---------------------------------------------------------------------------
 # muninn_search — content search
@@ -214,9 +232,22 @@ class TestMuninnSearch:
         initialized_store.create_project(id="no-doc", name="No Doc")
         # no summary set
 
-        result = muninn_search(query="No")
+        result = muninn_search(query="unrelated_keyword")
 
         assert "No projects found matching" in result
+
+    def test_search_multi_term_fts(self, initialized_store):
+        """Multi-term query requires both terms and returns an FTS snippet."""
+        initialized_store.create_project(id="s-both", name="Both")
+        initialized_store.create_project(id="s-one", name="One")
+        initialized_store.update_project("s-both", summary="Auth implementation includes OAuth callback flow")
+        initialized_store.update_project("s-one", summary="Auth implementation only")
+
+        result = muninn_search(query="auth oauth")
+
+        assert "s-both" in result
+        assert "s-one" not in result
+        assert "[Auth]" in result or "[OAuth]" in result
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +355,36 @@ class TestMuninnManageDeleteProject:
         """delete_project for non-existent project returns error."""
         result = muninn_manage(action="delete_project", project="no-such")
         assert "Error" in result
+
+
+class TestMuninnManageSetGithubRepo:
+    def test_set_github_repo(self, initialized_store):
+        """set_github_repo stores owner/repo on the project."""
+        initialized_store.create_project(id="repo-proj", name="Repo Project")
+
+        result = muninn_manage(
+            action="set_github_repo",
+            project="repo-proj",
+            value="owner/repo",
+        )
+
+        assert "GitHub repo updated" in result
+        project = initialized_store.get_project("repo-proj")
+        assert project is not None
+        assert project.github_repo == "owner/repo"
+
+    def test_set_github_repo_missing_value(self, initialized_store):
+        """set_github_repo requires value parameter."""
+        initialized_store.create_project(id="repo-proj-2", name="Repo Project 2")
+
+        result = muninn_manage(
+            action="set_github_repo",
+            project="repo-proj-2",
+            value=None,
+        )
+
+        assert "Error" in result
+        assert "value" in result.lower()
 
 
 class TestMuninnManageUnknownAction:

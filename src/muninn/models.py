@@ -133,6 +133,8 @@ class Project:
     github_repo: str | None = None
     # Not stored in DB — computed on read.
     memory_count: int = 0
+    # Optional FTS search snippet used by muninn_search formatting.
+    search_snippet: str | None = None
 
     def __post_init__(self) -> None:
         validate_project_status(self.status)

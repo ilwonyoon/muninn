@@ -16,6 +16,6 @@ export async function GET(
     );
   }
 
-  const revision = await getSummaryRevision(projectId);
-  return NextResponse.json(revision);
+  const revisions = await getSummaryRevision(projectId);
+  return NextResponse.json(revisions);
 }

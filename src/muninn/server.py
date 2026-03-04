@@ -101,15 +101,33 @@ def _instructions_path() -> Path:
     return Path(MuninnStore.default_db_path()).parent / "instructions.md"
 
 
-def _load_instructions() -> str:
-    """Load instructions from file, writing the default if the file doesn't exist."""
+def _load_instructions(store: MuninnStore) -> str:
+    """Load instructions from DB, seeding from file/default when empty."""
+    content = store.get_instructions()
+    if content:
+        return content
+
+    # Legacy fallback: seed DB from the previous instructions file once.
     path = _instructions_path()
     if path.exists():
-        return path.read_text(encoding="utf-8")
-    # File doesn't exist — write the default so the user has a starting point.
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_INSTRUCTIONS, encoding="utf-8")
+        seeded = path.read_text(encoding="utf-8")
+        store.update_instructions(seeded)
+        return seeded
+
+    # Fresh install fallback: seed DB with bundled defaults.
+    store.update_instructions(_INSTRUCTIONS)
     return _INSTRUCTIONS
+
+
+def _enable_dynamic_instructions(mcp: FastMCP, store: MuninnStore) -> None:
+    """Refresh MCP instructions from DB on each initialization request."""
+    original_create = mcp._mcp_server.create_initialization_options
+
+    def _create_initialization_options(*args, **kwargs):
+        mcp._mcp_server.instructions = _load_instructions(store)
+        return original_create(*args, **kwargs)
+
+    mcp._mcp_server.create_initialization_options = _create_initialization_options  # type: ignore[method-assign]
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -153,6 +171,7 @@ def _create_mcp(
     host: str = "127.0.0.1",
     port: int = 8000,
     public_url: str | None = None,
+    store: MuninnStore | None = None,
 ) -> FastMCP:
     """Create and configure the FastMCP instance with all tools registered.
 
@@ -207,15 +226,19 @@ def _create_mcp(
             ],
         )
 
+    resolved_store = store or MuninnStore()
+    instructions = _load_instructions(resolved_store)
+
     mcp = FastMCP(
         "muninn",
-        instructions=_load_instructions(),
+        instructions=instructions,
         host=host,
         port=port,
         streamable_http_path="/",
         transport_security=transport_security,
         **oauth_kwargs,
     )
+    _enable_dynamic_instructions(mcp, resolved_store)
     mcp.tool()(muninn_save)
     mcp.tool()(muninn_recall)
     mcp.tool()(muninn_search)
@@ -295,7 +318,8 @@ def main() -> None:
 
     if args.reset:
         store.reset_data()
-        # Delete the instructions file so a fresh default is written next start.
+        store.update_instructions(_INSTRUCTIONS)
+        # Clean up legacy file; DB is now canonical.
         inst_path = _instructions_path()
         if inst_path.exists():
             inst_path.unlink()
@@ -308,6 +332,7 @@ def main() -> None:
         host=args.host,
         port=args.port,
         public_url=args.public_url,
+        store=store,
     )
 
     if args.transport == "http":

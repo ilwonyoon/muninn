@@ -139,7 +139,37 @@ def muninn_recall(
         else:
             projects = store.list_projects(status="active")
 
-        return format_document_recall(projects)
+        hydrated_projects: list[Project] = []
+        for proj in projects:
+            summary = proj.summary
+            sync_memory = store.get_latest_sync_memory(proj.id)
+            if sync_memory is not None:
+                base = summary if summary else "No document yet."
+                summary = (
+                    f"{base}\n\n---\n## GitHub Activity\n"
+                    f"{sync_memory.content}"
+                )
+
+            if summary == proj.summary:
+                hydrated_projects.append(proj)
+                continue
+
+            hydrated_projects.append(
+                Project(
+                    id=proj.id,
+                    name=proj.name,
+                    created_at=proj.created_at,
+                    updated_at=proj.updated_at,
+                    status=proj.status,
+                    category=proj.category,
+                    summary=summary,
+                    github_repo=proj.github_repo,
+                    memory_count=proj.memory_count,
+                    search_snippet=proj.search_snippet,
+                )
+            )
+
+        return format_document_recall(hydrated_projects)
 
     except Exception as exc:
         return f"Error recalling document: {exc}"
@@ -155,7 +185,11 @@ def muninn_search(
     """
     _log_usage("muninn_search")
     try:
+        query = query.strip()
+        if not query:
+            return "Error: query must not be empty."
         store = _get_store()
+        # search_projects populates Project.search_snippet using FTS5 snippet().
         projects = store.search_projects(query)
         return format_document_search(projects, query)
 
@@ -186,12 +220,12 @@ def muninn_status() -> str:
 
 
 def muninn_manage(
-    action: Literal["set_status", "create_project", "delete_project"],
+    action: Literal["set_status", "create_project", "delete_project", "set_github_repo"],
     project: str,
     status: str | None = None,
     value: str | None = None,
 ) -> str:
-    """Manage projects: change status, create, or delete.
+    """Manage projects: change status, create, delete, or set GitHub repo.
 
     ACTIONS:
 
@@ -209,6 +243,10 @@ def muninn_manage(
     delete_project — Permanently delete a project and its document.
       This is irreversible. The project and all associated data are removed.
       Example: action="delete_project", project="old-project"
+
+    set_github_repo — Link a GitHub repo to a project.
+      Required: value = owner/repo
+      Example: action="set_github_repo", project="muninn", value="owner/repo"
     """
     _log_usage("muninn_manage", project=project)
     try:
@@ -247,9 +285,21 @@ def muninn_manage(
                 )
             return f"Error: project '{project}' not found."
 
+        if action == "set_github_repo":
+            if value is None or not value.strip():
+                return "Error: 'value' parameter is required for set_github_repo action."
+            repo = value.strip()
+            updated = store.set_github_repo(project, repo)
+            if not updated:
+                return f"Error: project '{project}' not found."
+            return format_manage_result(
+                "GitHub repo updated",
+                f"{project} -> {repo}",
+            )
+
         return (
             f"Error: unknown action '{action}'. "
-            "Valid actions: set_status, create_project, delete_project."
+            "Valid actions: set_status, create_project, delete_project, set_github_repo."
         )
 
     except Exception as exc:

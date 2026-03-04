@@ -145,7 +145,7 @@ def format_document_search(projects: list[Project], query: str) -> str:
     lines: list[str] = [f'\U0001f50d Projects matching "{query}"', ""]
 
     for p in projects:
-        snippet = _extract_snippet(p.summary or "", query)
+        snippet = p.search_snippet or _extract_snippet(p.summary or "", query)
         lines.append(f"- {p.id} ({p.status}): {snippet}")
 
     lines.append("")
