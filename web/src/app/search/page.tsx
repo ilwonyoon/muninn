@@ -236,7 +236,7 @@ function SearchInner() {
               {results.map((mem) => (
                 <Link
                   key={mem.id}
-                  href={`/projects/${mem.project_id}/${mem.short_id}`}
+                  href={`/projects/${mem.project_id}`}
                   className="flex items-start gap-3 px-4 py-3 transition-colors hover:bg-card-hover"
                 >
                   <span className="shrink-0 rounded bg-card-hover px-1.5 py-0.5 font-mono text-[10px] text-muted">
