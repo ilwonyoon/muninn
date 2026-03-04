@@ -286,6 +286,37 @@ SQL injection, XSS/CSRF — 취약점 미발견 (parameterized query 사용, 쿠
 
 ---
 
+## 실행 결과
+
+> 실행일: 2026-03-04
+> 방법: Codex CLI 위임 + Claude Code 검증 (autopilot)
+
+| Phase | 항목 | 상태 | 커밋 |
+|-------|------|------|------|
+| **Phase 1** | A-1. /api/* auth 적용 | ✅ 완료 | `8a7abd3` |
+| | A-2. 스키마 마이그레이션 hard error | ✅ 완료 | `8a7abd3` |
+| | A-3. 쓰기 경로 트랜잭션 래핑 | ✅ 완료 | `8a7abd3` |
+| | A-4. NEXT_PUBLIC_* key 제거 | ✅ 완료 | `8a7abd3` |
+| | A-5. middleware fail-closed | ✅ 완료 | `8a7abd3` |
+| **Phase 2** | B-1. recall SQL pagination | ✅ 완료 | `4628509` |
+| | B-2. supersede chain → recursive CTE | ✅ 완료 | `4628509` |
+| | B-3. batch sync for supersede | ✅ 완료 | `4628509` |
+| | B-4. composite index for recall | ✅ 완료 | `4628509` |
+| | B-5. 대시보드 fetch 중앙화 + 캐시 | ✅ 완료 | `4628509` |
+| **Phase 3** | C-1. MCP search → FTS5 통합 | ✅ 완료 | `0db0657` |
+| | C-2. Document versioning (10 revisions) | ✅ 완료 | `0db0657` |
+| | C-3. 대시보드 네비게이션 수정 | ✅ 완료 | `0db0657` |
+| | C-4. Instruction 단일 소스 (DB) | ✅ 완료 | `0db0657` |
+| | C-5. README 재작성 | ✅ 완료 | `0db0657` |
+| | C-6. GitHub sync → MCP recall 통합 | ✅ 완료 | `0db0657` |
+
+**검증 요약:**
+- Python 테스트: 269 passed (16개 신규 테스트 추가)
+- Web 빌드: 성공
+- 복구 포인트: `v0.3.0-stable` 태그
+
+---
+
 ## 실행 스펙 (Codex 위임용)
 
 ### Phase 1: 안정성 + 보안 기반
