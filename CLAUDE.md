@@ -145,6 +145,15 @@ Documents must be structured markdown with `## ` headers. Plain text is rejected
 - **Location:** `~/.local/share/muninn/muninn.db` (default), override with `MUNINN_DB_PATH`
 - **Schema version:** v3 (tracked in `schema_version` table). v2→v3 added `embedding BLOB` column.
 
+## Muninn Auto-Save
+
+git commit 후 commit 메시지가 `feat:` 또는 `refactor:`이면:
+1. `muninn_recall(project="muninn")` → 현재 문서 확인
+2. git에 없는 정보(why, topology, ops, state)만 문서에 머지
+3. `muninn_save(project="muninn", content="<머지된 문서>")`로 업데이트
+
+세부 규칙은 Muninn MCP instructions 참조.
+
 ## Coding Conventions
 
 - All tool functions return strings (never raise — catch exceptions internally)
