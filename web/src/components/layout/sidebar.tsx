@@ -61,9 +61,6 @@ function StatusGroup({
           )}
         >
           <span className="truncate">{project.id}</span>
-          <span className="font-mono text-[10px] text-muted">
-            {project.memory_count}
-          </span>
         </Link>
       ))}
     </div>
