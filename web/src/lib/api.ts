@@ -1,8 +1,7 @@
 /**
  * Muninn REST API client.
  *
- * In dev mode, Next.js rewrites /api/* → localhost:8000/api/*
- * so all calls go to the relative /api path.
+ * Server-side only: calls the Python backend directly.
  */
 
 import "server-only";
@@ -15,7 +14,8 @@ import type {
   SearchResponse,
 } from "./types";
 
-const BASE = "/api";
+const BACKEND = process.env.MUNINN_BACKEND_URL || "http://127.0.0.1:8000";
+const BASE = `${BACKEND}/api`;
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const apiKey = process.env.MUNINN_API_KEY;
@@ -45,10 +45,21 @@ export function getProject(id: string): Promise<Project> {
   return fetchJSON(`/projects/${id}`);
 }
 
+export async function getProjectOrNull(id: string): Promise<Project | null> {
+  try {
+    return await getProject(id);
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("not found")) return null;
+    throw err;
+  }
+}
+
 export function createProject(data: {
   id: string;
   name: string;
   summary?: string;
+  github_repo?: string;
+  category?: string;
 }): Promise<Project> {
   return fetchJSON("/projects", {
     method: "POST",
@@ -58,12 +69,16 @@ export function createProject(data: {
 
 export function updateProject(
   id: string,
-  data: Partial<Pick<Project, "name" | "status" | "summary" | "github_repo">>
+  data: Partial<Pick<Project, "name" | "status" | "summary" | "github_repo">> & { category?: string }
 ): Promise<Project> {
   return fetchJSON(`/projects/${id}`, {
     method: "PATCH",
     body: JSON.stringify(data),
   });
+}
+
+export function deleteProject(id: string): Promise<{ deleted: boolean }> {
+  return fetchJSON(`/projects/${id}`, { method: "DELETE" });
 }
 
 // -- Memories ---------------------------------------------------------------

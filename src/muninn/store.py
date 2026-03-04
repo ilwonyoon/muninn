@@ -1,4 +1,4 @@
-"""SQLite-backed memory store for Muninn (libSQL/Turso compatible)."""
+"""SQLite-backed memory store for Muninn."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import libsql
+import sqlite3
 
 from muninn.models import Memory, MemorySource, Project, ProjectCategory, ProjectStatus, validate_memory_content, validate_tags
 
@@ -21,11 +21,10 @@ _DEFAULT_DB_DIR = os.path.join(os.path.expanduser("~"), ".local", "share", "muni
 _DEFAULT_DB_NAME = "muninn.db"
 
 _CURRENT_SCHEMA_VERSION = 8
-_SYNC_COOLDOWN = 2.0
 
 _UNSET = object()
 
-# Schema SQL split into individual statements (libsql has no executescript).
+# Schema SQL split into individual statements for clarity.
 _SCHEMA_STATEMENTS = [
     """CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY,
@@ -246,7 +245,7 @@ def _fetch_tags_for_memories(
 # ---------------------------------------------------------------------------
 
 class MuninnStore:
-    """SQLite-backed store for Muninn projects and memories (libSQL/Turso compatible)."""
+    """SQLite-backed store for Muninn projects and memories."""
 
     @staticmethod
     def default_db_path() -> str:
@@ -255,17 +254,12 @@ class MuninnStore:
 
     def __init__(self, db_path: str | None = None) -> None:
         self._db_path = _resolve_db_path(db_path)
-        self._turso_url = os.environ.get("TURSO_DATABASE_URL")
-        self._turso_token = os.environ.get("TURSO_AUTH_TOKEN")
-        self._last_sync_time = 0.0
 
         # Ensure parent directory exists.
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
 
         # Initialise schema on first run.
         self._conn = self._create_connection()
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA busy_timeout=5000")
 
         for attempt in range(5):
             try:
@@ -286,125 +280,17 @@ class MuninnStore:
                     continue
                 raise
 
-        self._do_sync()
-
     # ------------------------------------------------------------------
     # Connection
     # ------------------------------------------------------------------
 
     def _create_connection(self) -> Any:
-        """Open a new connection with foreign keys enabled.
-
-        If TURSO_DATABASE_URL and TURSO_AUTH_TOKEN are set, uses embedded
-        replica mode (local file as read cache, Turso cloud as source of truth).
-
-        On metadata corruption ("db file exists but metadata file does not"),
-        automatically removes stale local files and retries from a fresh sync.
-        """
-        import logging
-
-        log = logging.getLogger("muninn")
-
-        if self._turso_url and self._turso_token:
-            try:
-                conn = libsql.connect(
-                    self._db_path,
-                    sync_url=self._turso_url,
-                    auth_token=self._turso_token,
-                )
-            except (ValueError, Exception) as exc:
-                if "metadata" in str(exc).lower() or "invalid local state" in str(exc).lower():
-                    log.warning(
-                        "Turso metadata corruption detected, resetting local replica: %s", exc
-                    )
-                    self._reset_local_replica()
-                    try:
-                        conn = libsql.connect(
-                            self._db_path,
-                            sync_url=self._turso_url,
-                            auth_token=self._turso_token,
-                        )
-                    except Exception as retry_exc:
-                        log.error("Turso reconnect after reset failed: %s", retry_exc)
-                        log.warning("Falling back to local-only SQLite")
-                        conn = libsql.connect(self._db_path)
-                else:
-                    log.error("Turso connection failed: %s", exc)
-                    log.warning("Falling back to local-only SQLite")
-                    conn = libsql.connect(self._db_path)
-        else:
-            conn = libsql.connect(self._db_path)
-
+        """Create a plain sqlite3 connection."""
+        conn = sqlite3.connect(self._db_path, check_same_thread=False)
         conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode=WAL")
         return conn
-
-    def _reset_local_replica(self) -> None:
-        """Remove local DB + metadata files so libsql can do a fresh sync."""
-        import logging
-        from pathlib import Path
-
-        log = logging.getLogger("muninn")
-        db = Path(self._db_path)
-        for suffix in ("", "-info", "-wal", "-shm"):
-            p = db.parent / (db.name + suffix)
-            if p.exists():
-                log.info("Removing stale replica file: %s", p)
-                p.unlink(missing_ok=True)
-
-    def _sync_if_needed(self) -> None:
-        """Sync embedded replica for reads when cooldown has elapsed.
-
-        Sync failures are logged but never block reads — stale local data
-        is always preferable to a 500 error.
-        """
-        if not (self._turso_url and self._turso_token):
-            return
-        now = time.monotonic()
-        if now - self._last_sync_time >= _SYNC_COOLDOWN:
-            try:
-                self._do_sync()
-            except Exception:
-                pass  # logged inside _do_sync; reads proceed with stale data
-
-    def _sync_after_write(self) -> None:
-        """Sync embedded replica immediately after writes.
-
-        Failures are logged but do not raise — data is committed locally
-        and will sync on the next successful attempt.
-        """
-        if not (self._turso_url and self._turso_token):
-            return
-        try:
-            self._do_sync()
-        except Exception:
-            pass  # logged inside _do_sync; local commit is safe
-
-    def _do_sync(self) -> None:
-        """Sync embedded replica and refresh connection once on failure.
-
-        If reconnect also fails, preserves the existing connection so
-        local reads/writes continue working.
-        """
-        import logging
-
-        log = logging.getLogger("muninn")
-        if not (self._turso_url and self._turso_token):
-            return
-        try:
-            self._conn.sync()
-            self._last_sync_time = time.monotonic()
-        except Exception as exc:
-            log.error("Turso sync failed: %s", exc)
-            old_conn = self._conn
-            try:
-                self._conn = self._create_connection()
-                self._conn.sync()
-                self._last_sync_time = time.monotonic()
-            except Exception as reconnect_exc:
-                log.error("Turso reconnect failed: %s", reconnect_exc)
-                self._conn = old_conn  # preserve existing connection
-                raise
 
     # ------------------------------------------------------------------
     # Migrations
@@ -582,7 +468,6 @@ class MuninnStore:
             (id, name, summary, github_repo, category, now, now),
         )
         self._conn.commit()
-        self._sync_after_write()
         return Project(
             id=id,
             name=name,
@@ -597,7 +482,6 @@ class MuninnStore:
 
     def get_project(self, id: str) -> Project | None:
         """Fetch a single project by *id*, or ``None`` if not found."""
-        self._sync_if_needed()
         row = _row_to_dict(self._conn.execute(
             "SELECT * FROM projects WHERE id = ?", (id,)
         ))
@@ -621,7 +505,6 @@ class MuninnStore:
         Each returned ``Project`` includes the count of active (non-superseded)
         memories as ``memory_count``.
         """
-        self._sync_if_needed()
         if status is not None:
             rows = _rows_to_dicts(self._conn.execute(
                 """
@@ -716,7 +599,6 @@ class MuninnStore:
         except:
             self._conn.rollback()
             raise
-        self._sync_after_write()
 
         project = self.get_project(id)
         if project is None:
@@ -733,7 +615,6 @@ class MuninnStore:
             (repo, project_id),
         )
         self._conn.commit()
-        self._sync_after_write()
         return cursor.rowcount > 0
 
     def delete_project(self, id: str) -> bool:
@@ -779,12 +660,10 @@ class MuninnStore:
         except:
             self._conn.rollback()
             raise
-        self._sync_after_write()
         return True
 
     def get_summary_revision(self, project_id: str) -> dict | None:
         """Return the previous summary revision (before latest update)."""
-        self._sync_if_needed()
         row = _row_to_dict(self._conn.execute(
             "SELECT summary, created_at FROM project_summary_revisions "
             "WHERE project_id = ? ORDER BY created_at DESC LIMIT 1",
@@ -801,7 +680,6 @@ class MuninnStore:
             (project_id,),
         )
         self._conn.commit()
-        self._sync_after_write()
 
     # ------------------------------------------------------------------
     # Instructions
@@ -842,7 +720,6 @@ class MuninnStore:
 
     def get_instructions(self) -> str:
         """Get instructions from DB. Returns empty string if none."""
-        self._sync_if_needed()
         try:
             mode = self._instructions_storage_mode(create_if_missing=False)
 
@@ -903,7 +780,6 @@ class MuninnStore:
             raise RuntimeError("Unsupported instructions table schema")
 
         self._conn.commit()
-        self._sync_after_write()
 
     # ------------------------------------------------------------------
     # Memory operations
@@ -962,7 +838,6 @@ class MuninnStore:
                     time.sleep(0.05 * (attempt + 1))
                     continue
                 raise
-        self._sync_after_write()
 
         return Memory(
             id=memory_id,
@@ -982,7 +857,6 @@ class MuninnStore:
 
     def get_latest_sync_memory(self, project_id: str) -> Memory | None:
         """Get the most recent active GitHub sync memory for a project."""
-        self._sync_if_needed()
         row = _row_to_dict(self._conn.execute(
             """
             SELECT m.*, GROUP_CONCAT(mt.tag) AS tags
@@ -1037,8 +911,6 @@ class MuninnStore:
         and stats is a dict with keys: chars_loaded, chars_budget,
         memories_loaded, memories_dropped.
         """
-        self._sync_if_needed()
-
         # Determine which projects to load.
         if project_id is not None:
             project_ids = [project_id]
@@ -1121,7 +993,6 @@ class MuninnStore:
         Results are sorted by FTS5 relevance (``rank``), then ``updated_at``
         descending.
         """
-        self._sync_if_needed()
         sql = """
             SELECT m.*
             FROM memories m
@@ -1204,7 +1075,6 @@ class MuninnStore:
             (now, resolved),
         )
         self._conn.commit()
-        self._sync_after_write()
         return cursor.rowcount > 0
 
     def update_memory(
@@ -1272,7 +1142,6 @@ class MuninnStore:
         except:
             self._conn.rollback()
             raise
-        self._sync_after_write()
 
         # Re-fetch to get final state
         updated_row = _row_to_dict(self._conn.execute(
@@ -1298,7 +1167,6 @@ class MuninnStore:
             (new_id, now, old_id),
         )
         self._conn.commit()
-        self._sync_after_write()
         return cursor.rowcount > 0
 
     def batch_supersede(self, old_ids: list[str], new_id: str) -> int:
@@ -1320,7 +1188,6 @@ class MuninnStore:
             (new_id, now, *old_ids),
         )
         self._conn.commit()
-        self._sync_after_write()
         return cursor.rowcount
 
     # ------------------------------------------------------------------
@@ -1329,7 +1196,6 @@ class MuninnStore:
 
     def get_memory(self, memory_id: str) -> Memory | None:
         """Fetch a single memory by full or prefix ID, including tags."""
-        self._sync_if_needed()
         resolved = self._resolve_memory_id(self._conn, memory_id)
         if resolved is None:
             return None
@@ -1343,7 +1209,6 @@ class MuninnStore:
 
     def get_all_tags(self, project_id: str | None = None) -> list[str]:
         """Return all distinct tags, optionally scoped to a project."""
-        self._sync_if_needed()
         if project_id is not None:
             rows = _rows_to_dicts(self._conn.execute(
                 """
@@ -1371,7 +1236,6 @@ class MuninnStore:
         Traces backward (who did this memory supersede?) and forward
         (who superseded this memory?) to build the complete chain.
         """
-        self._sync_if_needed()
         resolved = self._resolve_memory_id(self._conn, memory_id)
         if resolved is None:
             return []
@@ -1416,7 +1280,6 @@ class MuninnStore:
 
     def search_projects(self, query: str, limit: int = 20) -> list[Project]:
         """Search non-archived projects by FTS5 over name + summary."""
-        self._sync_if_needed()
         terms = [term for term in query.split() if term.strip()]
         if not terms:
             return []
@@ -1461,11 +1324,9 @@ class MuninnStore:
         except:
             self._conn.rollback()
             raise
-        self._sync_after_write()
 
     def get_dashboard_stats(self) -> dict[str, int]:
         """Return aggregate statistics for the dashboard overview."""
-        self._sync_if_needed()
         proj_row = _row_to_dict(self._conn.execute(
             "SELECT COUNT(*) AS cnt FROM projects"
         ))

@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
-import { ensureInit, getDashboardStats } from "@/lib/db";
+import { getStats } from "@/lib/api";
 
 export async function GET() {
   try {
-    await ensureInit();
-    const stats = await getDashboardStats();
+    const stats = await getStats();
     return NextResponse.json(stats);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

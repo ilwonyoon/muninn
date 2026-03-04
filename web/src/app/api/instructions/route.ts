@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureInit, getInstructions, putInstructions } from "@/lib/db";
+import { getInstructions, updateInstructions } from "@/lib/api";
 
 export async function GET() {
-  await ensureInit();
-  const instructions = await getInstructions();
-  return NextResponse.json({ instructions, path: "turso:instructions" });
+  const { content, path } = await getInstructions();
+  return NextResponse.json({ instructions: content, path });
 }
 
 export async function PUT(request: NextRequest) {
-  await ensureInit();
   let body: unknown;
   try {
     body = await request.json();
@@ -23,6 +21,6 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ error: "'instructions' field (string) is required", code: "BAD_REQUEST" }, { status: 400 });
   }
   const { instructions } = body as { instructions: string };
-  await putInstructions(instructions);
+  await updateInstructions(instructions);
   return NextResponse.json({ ok: true });
 }

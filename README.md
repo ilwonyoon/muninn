@@ -203,7 +203,6 @@ Open `http://localhost:3000`.
 - OAuth PIN auth: `MUNINN_OWNER_PASSWORD`
 - Bearer auth: `MUNINN_API_KEY`
 - GitHub sync auth: `GITHUB_TOKEN`
-- Optional Turso embedded replica: `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`
 
 ## Development
 

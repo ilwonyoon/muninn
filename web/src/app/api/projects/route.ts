@@ -1,15 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureInit, listProjects, createProject, getProject } from "@/lib/db";
+import { listProjects, createProject, getProjectOrNull } from "@/lib/api";
 
 export async function GET(request: NextRequest) {
-  await ensureInit();
   const status = request.nextUrl.searchParams.get("status") ?? undefined;
   const projects = await listProjects(status);
   return NextResponse.json(projects);
 }
 
 export async function POST(request: NextRequest) {
-  await ensureInit();
   let body: Record<string, unknown>;
   try {
     body = await request.json();
@@ -27,7 +25,7 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
-  const existing = await getProject(id);
+  const existing = await getProjectOrNull(id);
   if (existing) {
     return NextResponse.json(
       { error: `Project '${id}' already exists`, code: "CONFLICT" },

@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureInit, getAllTags } from "@/lib/db";
+import { listTags } from "@/lib/api";
 
 export async function GET(request: NextRequest) {
-  await ensureInit();
   const project = request.nextUrl.searchParams.get("project") ?? undefined;
-  const tags = await getAllTags(project);
+  const tags = await listTags(project);
   return NextResponse.json(tags);
 }

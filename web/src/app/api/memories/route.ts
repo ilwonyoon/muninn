@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureInit, createMemory, getProject } from "@/lib/db";
+import { createMemory, getProjectOrNull } from "@/lib/api";
 
 export async function POST(request: NextRequest) {
-  await ensureInit();
   let body: Record<string, unknown>;
   try {
     body = await request.json();
@@ -14,7 +13,7 @@ export async function POST(request: NextRequest) {
   if (!project_id || !content) {
     return NextResponse.json({ error: "'project_id' and 'content' are required", code: "BAD_REQUEST" }, { status: 400 });
   }
-  const project = await getProject(project_id);
+  const project = await getProjectOrNull(project_id);
   if (!project) {
     return NextResponse.json({ error: `Project '${project_id}' not found`, code: "NOT_FOUND" }, { status: 404 });
   }

@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureInit, searchMemories } from "@/lib/db";
+import { searchMemories } from "@/lib/api";
 
 export async function GET(request: NextRequest) {
-  await ensureInit();
   const sp = request.nextUrl.searchParams;
   const q = sp.get("q") ?? "";
   if (!q.trim()) {
@@ -14,6 +13,6 @@ export async function GET(request: NextRequest) {
   const limitStr = sp.get("limit");
   const limit = limitStr ? Math.max(1, Math.min(200, parseInt(limitStr, 10) || 50)) : 50;
 
-  const results = await searchMemories(q, project, tags, limit);
-  return NextResponse.json({ results, count: results.length });
+  const results = await searchMemories(q, { project, tags, limit });
+  return NextResponse.json(results);
 }

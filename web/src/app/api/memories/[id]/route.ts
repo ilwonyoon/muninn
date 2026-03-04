@@ -1,24 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureInit, getMemory, updateMemory, deleteMemory } from "@/lib/db";
+import { getMemory, updateMemory, deleteMemory } from "@/lib/api";
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  await ensureInit();
   const { id } = await params;
-  const memory = await getMemory(id);
-  if (!memory) {
-    return NextResponse.json({ error: `Memory '${id}' not found`, code: "NOT_FOUND" }, { status: 404 });
+  try {
+    const memory = await getMemory(id);
+    return NextResponse.json(memory);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("not found")) {
+      return NextResponse.json({ error: `Memory '${id}' not found`, code: "NOT_FOUND" }, { status: 404 });
+    }
+    throw err;
   }
-  return NextResponse.json(memory);
 }
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  await ensureInit();
   const { id } = await params;
   let body: Record<string, unknown>;
   try {
@@ -35,7 +38,7 @@ export async function PATCH(
     const updated = await updateMemory(id, { content, tags });
     return NextResponse.json(updated);
   } catch (err) {
-    const message = String(err);
+    const message = err instanceof Error ? err.message : String(err);
     if (message.includes("not found")) {
       return NextResponse.json({ error: message, code: "NOT_FOUND" }, { status: 404 });
     }
@@ -47,11 +50,18 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  await ensureInit();
   const { id } = await params;
-  const deleted = await deleteMemory(id);
-  if (!deleted) {
-    return NextResponse.json({ error: `Memory '${id}' not found`, code: "NOT_FOUND" }, { status: 404 });
+  try {
+    const result = await deleteMemory(id);
+    if (!result.deleted) {
+      return NextResponse.json({ error: `Memory '${id}' not found`, code: "NOT_FOUND" }, { status: 404 });
+    }
+    return NextResponse.json({ deleted: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("not found")) {
+      return NextResponse.json({ error: `Memory '${id}' not found`, code: "NOT_FOUND" }, { status: 404 });
+    }
+    throw err;
   }
-  return NextResponse.json({ deleted: true });
 }

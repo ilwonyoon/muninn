@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ensureInit, getProject, updateProject, deleteProject } from "@/lib/db";
+import { getProjectOrNull, updateProject, deleteProject } from "@/lib/api";
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  await ensureInit();
   const { id } = await params;
-  const project = await getProject(id);
+  const project = await getProjectOrNull(id);
   if (!project) {
     return NextResponse.json(
       { error: `Project '${id}' not found`, code: "NOT_FOUND" },
@@ -21,7 +20,6 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  await ensureInit();
   const { id } = await params;
 
   let body: Record<string, unknown>;
@@ -59,7 +57,8 @@ export async function PATCH(
   }
 
   try {
-    const updated = await updateProject(id, data);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const updated = await updateProject(id, data as any);
     return NextResponse.json(updated);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -80,14 +79,24 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  await ensureInit();
   const { id } = await params;
-  const deleted = await deleteProject(id);
-  if (!deleted) {
-    return NextResponse.json(
-      { error: `Project '${id}' not found`, code: "NOT_FOUND" },
-      { status: 404 }
-    );
+  try {
+    const result = await deleteProject(id);
+    if (!result.deleted) {
+      return NextResponse.json(
+        { error: `Project '${id}' not found`, code: "NOT_FOUND" },
+        { status: 404 }
+      );
+    }
+    return NextResponse.json({ deleted: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("not found")) {
+      return NextResponse.json(
+        { error: `Project '${id}' not found`, code: "NOT_FOUND" },
+        { status: 404 }
+      );
+    }
+    throw err;
   }
-  return NextResponse.json({ deleted: true });
 }
