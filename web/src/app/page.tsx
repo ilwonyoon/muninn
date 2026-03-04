@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { FolderPlus } from "lucide-react";
-import { getStats } from "@/lib/api";
+import { getStats } from "@/lib/api-client";
 import { useProjectStore } from "@/lib/store";
 import type { DashboardStats } from "@/lib/types";
 import { relativeTime } from "@/lib/utils";

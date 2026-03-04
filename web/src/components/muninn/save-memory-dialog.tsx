@@ -7,7 +7,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { createMemory } from "@/lib/api";
+import { createMemory } from "@/lib/api-client";
 import type { Memory } from "@/lib/types";
 import { useAppToast } from "@/lib/toast-context";
 

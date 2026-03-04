@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import os
 from typing import TYPE_CHECKING
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -14,34 +15,62 @@ if TYPE_CHECKING:
 
 
 class BearerTokenMiddleware(BaseHTTPMiddleware):
-    """Validates Bearer token in the Authorization header.
+    """Validates API key from ``x-api-key`` or ``Authorization: Bearer``.
 
     Rejects requests without a valid token with HTTP 401.
     Uses constant-time comparison to prevent timing attacks.
     """
 
-    def __init__(self, app: object, api_key: str) -> None:
+    _BYPASS_PREFIXES = ("/oauth/", "/dashboard/", "/static/", "/_next/")
+    _BYPASS_PATHS = ("/oauth", "/dashboard", "/favicon.ico", "/robots.txt")
+
+    def __init__(self, app: object, api_key: str | None = None) -> None:
         super().__init__(app)  # type: ignore[arg-type]
         self._api_key = api_key
+
+    @staticmethod
+    def _is_api_path(path: str) -> bool:
+        return path == "/api" or path.startswith("/api/")
+
+    @classmethod
+    def _is_bypassed_path(cls, path: str) -> bool:
+        return path in cls._BYPASS_PATHS or path.startswith(cls._BYPASS_PREFIXES)
+
+    @staticmethod
+    def _extract_token(request: Request) -> str:
+        header_key = request.headers.get("x-api-key", "").strip()
+        if header_key:
+            return header_key
+
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            return auth_header.removeprefix("Bearer ").strip()
+
+        return ""
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        # Dashboard REST API routes are local-only, skip auth.
-        if request.url.path.startswith("/api/"):
+        path = request.url.path
+
+        # OAuth and static assets stay publicly accessible.
+        if self._is_bypassed_path(path):
             return await call_next(request)
 
-        auth_header = request.headers.get("authorization", "")
+        configured_api_key = self._api_key or os.environ.get("MUNINN_API_KEY", "")
 
-        if not auth_header.startswith("Bearer "):
+        # Local dev mode: allow API routes when no API key is configured.
+        if not configured_api_key and self._is_api_path(path):
+            return await call_next(request)
+
+        token = self._extract_token(request)
+        if not token:
             return JSONResponse(
-                {"error": "Missing or invalid Authorization header"},
+                {"error": "Missing or invalid Authorization header or x-api-key"},
                 status_code=401,
             )
 
-        token = auth_header.removeprefix("Bearer ").strip()
-
-        if not hmac.compare_digest(token, self._api_key):
+        if not hmac.compare_digest(token, configured_api_key):
             return JSONResponse(
                 {"error": "Invalid API key"},
                 status_code=401,

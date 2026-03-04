@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { listProjects } from "./api";
+import { listProjects } from "./api-client";
 import type { Project } from "./types";
 
 interface ProjectStore {

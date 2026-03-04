@@ -1,11 +1,8 @@
 /**
- * Muninn REST API client.
+ * Browser-safe Muninn REST API client.
  *
- * In dev mode, Next.js rewrites /api/* → localhost:8000/api/*
- * so all calls go to the relative /api path.
+ * Calls Next.js API routes via relative /api paths.
  */
-
-import "server-only";
 
 import type {
   DashboardStats,
@@ -18,11 +15,9 @@ import type {
 const BASE = "/api";
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
-  const apiKey = process.env.MUNINN_API_KEY;
   const res = await fetch(`${BASE}${path}`, {
     headers: {
       "Content-Type": "application/json",
-      ...(apiKey ? { "x-api-key": apiKey } : {}),
       ...init?.headers,
     },
     ...init,

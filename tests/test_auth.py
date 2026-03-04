@@ -26,10 +26,23 @@ def _homepage(request: Request) -> PlainTextResponse:
     return PlainTextResponse("OK")
 
 
-def _make_client(api_key: str = TEST_API_KEY) -> TestClient:
+def _api_projects(request: Request) -> PlainTextResponse:
+    return PlainTextResponse("API OK")
+
+
+def _make_client(api_key: str | None = TEST_API_KEY) -> TestClient:
     """Return a TestClient wrapping a minimal Starlette app with BearerTokenMiddleware."""
     app = Starlette(
         routes=[Route("/", _homepage)],
+        middleware=[Middleware(BearerTokenMiddleware, api_key=api_key)],
+    )
+    return TestClient(app, raise_server_exceptions=True)
+
+
+def _make_api_client(api_key: str | None = TEST_API_KEY) -> TestClient:
+    """Return a TestClient exposing a single /api route behind auth middleware."""
+    app = Starlette(
+        routes=[Route("/api/projects", _api_projects)],
         middleware=[Middleware(BearerTokenMiddleware, api_key=api_key)],
     )
     return TestClient(app, raise_server_exceptions=True)
@@ -244,3 +257,31 @@ class TestDifferentApiKeys:
         assert client_a.get("/", headers={"Authorization": "Bearer key-beta"}).status_code == 401
         assert client_b.get("/", headers={"Authorization": "Bearer key-beta"}).status_code == 200
         assert client_b.get("/", headers={"Authorization": "Bearer key-alpha"}).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# BearerTokenMiddleware — /api route behavior
+# ---------------------------------------------------------------------------
+
+
+class TestApiRouteAuthentication:
+    def test_api_route_with_env_key_and_valid_key_returns_200(self, monkeypatch):
+        """When MUNINN_API_KEY is set, /api accepts the matching x-api-key."""
+        monkeypatch.setenv("MUNINN_API_KEY", "env-secret")
+        client = _make_api_client(api_key=None)
+        response = client.get("/api/projects", headers={"x-api-key": "env-secret"})
+        assert response.status_code == 200
+
+    def test_api_route_with_env_key_and_invalid_key_returns_401(self, monkeypatch):
+        """When MUNINN_API_KEY is set, /api rejects an invalid key."""
+        monkeypatch.setenv("MUNINN_API_KEY", "env-secret")
+        client = _make_api_client(api_key=None)
+        response = client.get("/api/projects", headers={"x-api-key": "wrong-key"})
+        assert response.status_code == 401
+
+    def test_api_route_without_env_key_returns_200(self, monkeypatch):
+        """When MUNINN_API_KEY is not set, /api stays open for local dev mode."""
+        monkeypatch.delenv("MUNINN_API_KEY", raising=False)
+        client = _make_api_client(api_key=None)
+        response = client.get("/api/projects")
+        assert response.status_code == 200

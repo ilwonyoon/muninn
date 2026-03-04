@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Search as SearchIcon } from "lucide-react";
-import { searchMemories, listTags } from "@/lib/api";
+import { searchMemories, listTags } from "@/lib/api-client";
 import { useProjectStore } from "@/lib/store";
 import type { Memory } from "@/lib/types";
 import { truncate, relativeTime } from "@/lib/utils";

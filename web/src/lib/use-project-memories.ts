@@ -5,7 +5,7 @@ import {
   getProject,
   listMemories,
   listTags,
-} from "./api";
+} from "./api-client";
 import type {
   Memory,
   Project,

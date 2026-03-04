@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Plus, X } from "lucide-react";
-import { listMemories, createMemory } from "@/lib/api";
+import { listMemories, createMemory } from "@/lib/api-client";
 import type { Memory } from "@/lib/types";
 import { cn, getDateGroup } from "@/lib/utils";
 import { MarkdownContent } from "@/components/muninn/markdown-content";

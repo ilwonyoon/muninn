@@ -9,7 +9,7 @@ import {
   Plus,
   Search as SearchIcon,
 } from "lucide-react";
-import { searchMemories } from "@/lib/api";
+import { searchMemories } from "@/lib/api-client";
 import { useProjectStore } from "@/lib/store";
 import type { Memory } from "@/lib/types";
 import { truncate } from "@/lib/utils";

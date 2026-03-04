@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Check, CheckCheck, Pencil, X } from "lucide-react";
-import { updateProject, getSummaryRevision, acknowledgeSummaryRevision } from "@/lib/api";
+import { updateProject, getSummaryRevision, acknowledgeSummaryRevision } from "@/lib/api-client";
 import type { Project } from "@/lib/types";
 import { MarkdownContent } from "@/components/muninn/markdown-content";
 import { useAppToast } from "@/lib/toast-context";

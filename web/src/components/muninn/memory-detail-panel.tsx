@@ -7,7 +7,7 @@ import {
   getSupersedeChain,
   updateMemory,
   deleteMemory,
-} from "@/lib/api";
+} from "@/lib/api-client";
 import type { Memory } from "@/lib/types";
 import { relativeTime } from "@/lib/utils";
 import { TagPill } from "@/components/muninn/tag-pill";

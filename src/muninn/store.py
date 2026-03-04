@@ -31,6 +31,7 @@ _SCHEMA_STATEMENTS = [
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         status TEXT DEFAULT 'active' CHECK(status IN ('active', 'paused', 'idea', 'archived')),
+        category TEXT DEFAULT 'project',
         summary TEXT,
         github_repo TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -44,6 +45,7 @@ _SCHEMA_STATEMENTS = [
         source TEXT DEFAULT 'conversation' CHECK(source IN ('conversation', 'github', 'manual')),
         embedding BLOB DEFAULT NULL,
         superseded_by TEXT,
+        category TEXT DEFAULT 'context',
         parent_memory_id TEXT DEFAULT NULL,
         title TEXT DEFAULT NULL,
         resolved INTEGER DEFAULT 0,
@@ -58,6 +60,8 @@ _SCHEMA_STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS idx_memory_tags_tag ON memory_tags(tag)",
     "CREATE INDEX IF NOT EXISTS idx_memories_project_id ON memories(project_id)",
     "CREATE INDEX IF NOT EXISTS idx_memories_superseded_by ON memories(superseded_by)",
+    "CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category)",
+    "CREATE INDEX IF NOT EXISTS idx_memories_parent ON memories(parent_memory_id)",
     """CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
         content,
         title,
@@ -80,7 +84,14 @@ _SCHEMA_STATEMENTS = [
         version INTEGER PRIMARY KEY,
         applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )""",
-    "INSERT OR IGNORE INTO schema_version (version) VALUES (6)",
+    """CREATE TABLE IF NOT EXISTS project_summary_revisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id TEXT NOT NULL REFERENCES projects(id),
+        summary TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_summary_revisions_project ON project_summary_revisions(project_id, created_at)",
+    "INSERT OR IGNORE INTO schema_version (version) VALUES (8)",
 ]
 
 
@@ -231,7 +242,10 @@ class MuninnStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         _execute_statements(self._conn, _SCHEMA_STATEMENTS)
-        self._run_migrations(self._conn)
+        try:
+            self._run_migrations(self._conn)
+        except Exception as exc:
+            raise RuntimeError("Schema migration failed") from exc
         self._conn.commit()
         self._do_sync()
 
@@ -300,6 +314,11 @@ class MuninnStore:
     # Migrations
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _is_duplicate_column_error(exc: Exception) -> bool:
+        """Return True if *exc* indicates an already-existing column migration."""
+        return "duplicate column" in str(exc).lower()
+
     def _run_migrations(self, conn: Any) -> None:
         """Apply any pending schema migrations."""
         row = _row_to_dict(conn.execute(
@@ -317,8 +336,9 @@ class MuninnStore:
                 conn.execute(
                     "ALTER TABLE memories ADD COLUMN embedding BLOB DEFAULT NULL"
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                if not self._is_duplicate_column_error(exc):
+                    raise
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (3)")
 
         # v4: add category column for content type classification.
@@ -330,8 +350,9 @@ class MuninnStore:
                     conn.execute(
                         "ALTER TABLE memories ADD COLUMN category TEXT DEFAULT 'context'"
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    if not self._is_duplicate_column_error(exc):
+                        raise
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category)"
             )
@@ -385,8 +406,9 @@ class MuninnStore:
             ]:
                 try:
                     conn.execute(col_sql)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    if not self._is_duplicate_column_error(exc):
+                        raise
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_memories_parent ON memories(parent_memory_id)"
             )
@@ -421,8 +443,9 @@ class MuninnStore:
                     conn.execute(
                         "ALTER TABLE projects ADD COLUMN category TEXT DEFAULT 'project'"
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    if not self._is_duplicate_column_error(exc):
+                        raise
             conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (7)")
 
         # v8: add project_summary_revisions table for diff tracking.
@@ -563,28 +586,33 @@ class MuninnStore:
         set_clause = ", ".join(f"{col} = ?" for col in updates)
         values = tuple(updates.values()) + (id,)
 
-        # Save current summary to revisions before updating
-        if "summary" in updates:
-            old_row = _row_to_dict(self._conn.execute(
-                "SELECT summary FROM projects WHERE id = ?", (id,)
-            ))
-            if old_row is not None and old_row["summary"] is not None:
-                self._conn.execute(
-                    "DELETE FROM project_summary_revisions WHERE project_id = ?",
-                    (id,),
-                )
-                self._conn.execute(
-                    "INSERT INTO project_summary_revisions (project_id, summary) VALUES (?, ?)",
-                    (id, old_row["summary"]),
-                )
+        self._conn.execute("BEGIN")
+        try:
+            # Save current summary to revisions before updating
+            if "summary" in updates:
+                old_row = _row_to_dict(self._conn.execute(
+                    "SELECT summary FROM projects WHERE id = ?", (id,)
+                ))
+                if old_row is not None and old_row["summary"] is not None:
+                    self._conn.execute(
+                        "DELETE FROM project_summary_revisions WHERE project_id = ?",
+                        (id,),
+                    )
+                    self._conn.execute(
+                        "INSERT INTO project_summary_revisions (project_id, summary) VALUES (?, ?)",
+                        (id, old_row["summary"]),
+                    )
 
-        cursor = self._conn.execute(
-            f"UPDATE projects SET {set_clause} WHERE id = ?",
-            tuple(values),
-        )
-        if cursor.rowcount == 0:
-            raise ValueError(f"Project {id!r} not found")
-        self._conn.commit()
+            cursor = self._conn.execute(
+                f"UPDATE projects SET {set_clause} WHERE id = ?",
+                tuple(values),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError(f"Project {id!r} not found")
+            self._conn.commit()
+        except:
+            self._conn.rollback()
+            raise
         self._sync_after_write()
 
         project = self.get_project(id)
@@ -605,31 +633,36 @@ class MuninnStore:
         if row is None:
             return False
 
-        # Cascade delete: tags for all project memories.
-        self._conn.execute(
-            """
-            DELETE FROM memory_tags WHERE memory_id IN (
-                SELECT id FROM memories WHERE project_id = ?
+        self._conn.execute("BEGIN")
+        try:
+            # Cascade delete: tags for all project memories.
+            self._conn.execute(
+                """
+                DELETE FROM memory_tags WHERE memory_id IN (
+                    SELECT id FROM memories WHERE project_id = ?
+                )
+                """,
+                (id,),
             )
-            """,
-            (id,),
-        )
-        # Delete all memories.
-        self._conn.execute(
-            "DELETE FROM memories WHERE project_id = ?",
-            (id,),
-        )
-        # Delete summary revisions.
-        self._conn.execute(
-            "DELETE FROM project_summary_revisions WHERE project_id = ?",
-            (id,),
-        )
-        # Delete the project itself.
-        self._conn.execute(
-            "DELETE FROM projects WHERE id = ?",
-            (id,),
-        )
-        self._conn.commit()
+            # Delete all memories.
+            self._conn.execute(
+                "DELETE FROM memories WHERE project_id = ?",
+                (id,),
+            )
+            # Delete summary revisions.
+            self._conn.execute(
+                "DELETE FROM project_summary_revisions WHERE project_id = ?",
+                (id,),
+            )
+            # Delete the project itself.
+            self._conn.execute(
+                "DELETE FROM projects WHERE id = ?",
+                (id,),
+            )
+            self._conn.commit()
+        except:
+            self._conn.rollback()
+            raise
         self._sync_after_write()
         return True
 
@@ -679,25 +712,30 @@ class MuninnStore:
         now = _now_iso()
         tag_list = validate_tags(tags)
 
-        self._conn.execute(
-            """
-            INSERT INTO memories (id, project_id, content, depth, source, category, parent_memory_id, title, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (memory_id, project_id, content, 1, source, 'status', None, None, now, now),
-        )
-
-        for tag in tag_list:
+        self._conn.execute("BEGIN")
+        try:
             self._conn.execute(
-                "INSERT INTO memory_tags (memory_id, tag) VALUES (?, ?)",
-                (memory_id, tag),
+                """
+                INSERT INTO memories (id, project_id, content, depth, source, category, parent_memory_id, title, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (memory_id, project_id, content, 1, source, 'status', None, None, now, now),
             )
 
-        self._conn.execute(
-            "UPDATE projects SET updated_at = ? WHERE id = ?",
-            (now, project_id),
-        )
-        self._conn.commit()
+            for tag in tag_list:
+                self._conn.execute(
+                    "INSERT INTO memory_tags (memory_id, tag) VALUES (?, ?)",
+                    (memory_id, tag),
+                )
+
+            self._conn.execute(
+                "UPDATE projects SET updated_at = ? WHERE id = ?",
+                (now, project_id),
+            )
+            self._conn.commit()
+        except:
+            self._conn.rollback()
+            raise
         self._sync_after_write()
 
         return Memory(
@@ -944,31 +982,36 @@ class MuninnStore:
 
         set_clause = ", ".join(f"{col} = ?" for col in updates)
         values = tuple(updates.values()) + (memory_id,)
-        self._conn.execute(
-            f"UPDATE memories SET {set_clause} WHERE id = ?",
-            values,
-        )
-
-        # Update tags if provided
-        if tags is not None:
-            validated_tags = validate_tags(tags)
+        self._conn.execute("BEGIN")
+        try:
             self._conn.execute(
-                "DELETE FROM memory_tags WHERE memory_id = ?",
-                (memory_id,),
+                f"UPDATE memories SET {set_clause} WHERE id = ?",
+                values,
             )
-            for tag in validated_tags:
+
+            # Update tags if provided
+            if tags is not None:
+                validated_tags = validate_tags(tags)
                 self._conn.execute(
-                    "INSERT INTO memory_tags (memory_id, tag) VALUES (?, ?)",
-                    (memory_id, tag),
+                    "DELETE FROM memory_tags WHERE memory_id = ?",
+                    (memory_id,),
                 )
+                for tag in validated_tags:
+                    self._conn.execute(
+                        "INSERT INTO memory_tags (memory_id, tag) VALUES (?, ?)",
+                        (memory_id, tag),
+                    )
 
-        # Bump project updated_at
-        self._conn.execute(
-            "UPDATE projects SET updated_at = ? WHERE id = ?",
-            (now, row["project_id"]),
-        )
+            # Bump project updated_at
+            self._conn.execute(
+                "UPDATE projects SET updated_at = ? WHERE id = ?",
+                (now, row["project_id"]),
+            )
 
-        self._conn.commit()
+            self._conn.commit()
+        except:
+            self._conn.rollback()
+            raise
         self._sync_after_write()
 
         # Re-fetch to get final state
@@ -1127,14 +1170,19 @@ class MuninnStore:
         Projects themselves are kept but their summaries are set to NULL.
         """
         now = _now_iso()
-        self._conn.execute("DELETE FROM memory_tags")
-        self._conn.execute("DELETE FROM memories")
-        self._conn.execute("DELETE FROM project_summary_revisions")
-        self._conn.execute(
-            "UPDATE projects SET summary = NULL, updated_at = ?",
-            (now,),
-        )
-        self._conn.commit()
+        self._conn.execute("BEGIN")
+        try:
+            self._conn.execute("DELETE FROM memory_tags")
+            self._conn.execute("DELETE FROM memories")
+            self._conn.execute("DELETE FROM project_summary_revisions")
+            self._conn.execute(
+                "UPDATE projects SET summary = NULL, updated_at = ?",
+                (now,),
+            )
+            self._conn.commit()
+        except:
+            self._conn.rollback()
+            raise
         self._sync_after_write()
 
     def get_dashboard_stats(self) -> dict[str, int]:

@@ -7,7 +7,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { createProject } from "@/lib/api";
+import { createProject } from "@/lib/api-client";
 import type { Project } from "@/lib/types";
 import { useAppToast } from "@/lib/toast-context";
 

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, Info, Save } from "lucide-react";
 import Link from "next/link";
-import { getInstructions, updateInstructions } from "@/lib/api";
+import { getInstructions, updateInstructions } from "@/lib/api-client";
 
 type SaveStatus = "idle" | "saving" | "success" | "error";
 

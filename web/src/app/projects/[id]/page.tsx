@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Plus } from "lucide-react";
-import { updateProject } from "@/lib/api";
+import { updateProject } from "@/lib/api-client";
 import type { Project } from "@/lib/types";
 import { useProjectMemories } from "@/lib/use-project-memories";
 import { cn } from "@/lib/utils";
