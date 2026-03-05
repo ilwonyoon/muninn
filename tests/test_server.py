@@ -101,8 +101,10 @@ class TestCreateMcp:
         assert second.instructions == "Instruction B"
 
     def test_creates_mcp_when_instructions_table_is_missing(self, store):
-        store._conn.execute("DROP TABLE IF EXISTS instructions")
-        store._conn.commit()
+        from muninn.store import _connection
+        with _connection(store._db_path) as conn:
+            conn.execute("DROP TABLE IF EXISTS instructions")
+            conn.commit()
 
         mcp = _create_mcp(store=store)
         init_opts = mcp._mcp_server.create_initialization_options()

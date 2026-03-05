@@ -1026,8 +1026,10 @@ class TestSearchProjects:
         store.create_project(id="sp-rebuild", name="Rebuild")
         store.update_project("sp-rebuild", summary="auth oauth setup")
 
-        store._conn.execute("DELETE FROM projects_fts")
-        store._conn.commit()
+        from muninn.store import _connection
+        with _connection(store._db_path) as conn:
+            conn.execute("DELETE FROM projects_fts")
+            conn.commit()
         assert store.search_projects("auth") == []
 
         reloaded = MuninnStore(db_path=db_path)
@@ -1100,16 +1102,20 @@ class TestInstructions:
 
     def test_get_instructions_returns_empty_when_table_missing(self, store):
         """get_instructions returns empty string if instructions table is absent."""
-        store._conn.execute("DROP TABLE IF EXISTS instructions")
-        store._conn.commit()
+        from muninn.store import _connection
+        with _connection(store._db_path) as conn:
+            conn.execute("DROP TABLE IF EXISTS instructions")
+            conn.commit()
 
         assert store.get_instructions() == ""
 
     def test_get_instructions_returns_empty_for_unknown_schema(self, store):
         """get_instructions tolerates unexpected instructions schema."""
-        store._conn.execute("DROP TABLE IF EXISTS instructions")
-        store._conn.execute("CREATE TABLE instructions (foo TEXT)")
-        store._conn.commit()
+        from muninn.store import _connection
+        with _connection(store._db_path) as conn:
+            conn.execute("DROP TABLE IF EXISTS instructions")
+            conn.execute("CREATE TABLE instructions (foo TEXT)")
+            conn.commit()
 
         assert store.get_instructions() == ""
 

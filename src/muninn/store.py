@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -240,6 +241,19 @@ def _fetch_tags_for_memories(
     return {mid: tuple(tags) for mid, tags in tags_map.items()}
 
 
+@contextmanager
+def _connection(db_path: str):
+    """Open a short-lived SQLite connection with standard PRAGMAs."""
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    try:
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode=WAL")
+        yield conn
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # MuninnStore
 # ---------------------------------------------------------------------------
@@ -259,38 +273,41 @@ class MuninnStore:
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
 
         # Initialise schema on first run.
-        self._conn = self._create_connection()
-
         for attempt in range(5):
             try:
-                _execute_statements(self._conn, _SCHEMA_STATEMENTS)
-                try:
-                    self._run_migrations(self._conn)
-                except Exception as exc:
-                    raise RuntimeError("Schema migration failed") from exc
-                self._conn.commit()
+                with _connection(self._db_path) as conn:
+                    _execute_statements(conn, _SCHEMA_STATEMENTS)
+                    try:
+                        self._run_migrations(conn)
+                    except Exception as exc:
+                        raise RuntimeError("Schema migration failed") from exc
+                    conn.commit()
                 break
             except Exception as exc:
-                try:
-                    self._conn.rollback()
-                except Exception:
-                    pass
                 if "locked" in str(exc).lower() and attempt < 4:
                     time.sleep(0.05 * (attempt + 1))
                     continue
                 raise
 
     # ------------------------------------------------------------------
-    # Connection
+    # Write retry helper
     # ------------------------------------------------------------------
 
-    def _create_connection(self) -> Any:
-        """Create a plain sqlite3 connection."""
-        conn = sqlite3.connect(self._db_path, check_same_thread=False)
-        conn.execute("PRAGMA busy_timeout=5000")
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode=WAL")
-        return conn
+    def _write_with_retry(self, fn, max_attempts=5):
+        """Execute a write operation with retry on 'database is locked'."""
+        for attempt in range(max_attempts):
+            try:
+                with _connection(self._db_path) as conn:
+                    return fn(conn)
+            except Exception as exc:
+                if "locked" in str(exc).lower() and attempt < max_attempts - 1:
+                    time.sleep(0.05 * (attempt + 1))
+                    continue
+                raise
+
+    def close(self) -> None:
+        """No-op — connections are per-operation now."""
+        pass
 
     # ------------------------------------------------------------------
     # Migrations
@@ -460,14 +477,18 @@ class MuninnStore:
         from muninn.models import validate_project_category
         validate_project_category(category)
         now = _now_iso()
-        self._conn.execute(
-            """
-            INSERT INTO projects (id, name, summary, github_repo, category, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (id, name, summary, github_repo, category, now, now),
-        )
-        self._conn.commit()
+
+        def _do(conn):
+            conn.execute(
+                """
+                INSERT INTO projects (id, name, summary, github_repo, category, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (id, name, summary, github_repo, category, now, now),
+            )
+            conn.commit()
+
+        self._write_with_retry(_do)
         return Project(
             id=id,
             name=name,
@@ -482,22 +503,23 @@ class MuninnStore:
 
     def get_project(self, id: str) -> Project | None:
         """Fetch a single project by *id*, or ``None`` if not found."""
-        row = _row_to_dict(self._conn.execute(
-            "SELECT * FROM projects WHERE id = ?", (id,)
-        ))
-        if row is None:
-            return None
+        with _connection(self._db_path) as conn:
+            row = _row_to_dict(conn.execute(
+                "SELECT * FROM projects WHERE id = ?", (id,)
+            ))
+            if row is None:
+                return None
 
-        count_row = _row_to_dict(self._conn.execute(
-            """
-            SELECT COUNT(*) AS cnt FROM memories
-            WHERE project_id = ? AND superseded_by IS NULL
-            """,
-            (id,),
-        ))
-        memory_count = count_row["cnt"] if count_row else 0
+            count_row = _row_to_dict(conn.execute(
+                """
+                SELECT COUNT(*) AS cnt FROM memories
+                WHERE project_id = ? AND superseded_by IS NULL
+                """,
+                (id,),
+            ))
+            memory_count = count_row["cnt"] if count_row else 0
 
-        return _row_to_project(row, memory_count=memory_count)
+            return _row_to_project(row, memory_count=memory_count)
 
     def list_projects(self, status: str | None = None) -> list[Project]:
         """Return all projects, optionally filtered by *status*.
@@ -505,32 +527,33 @@ class MuninnStore:
         Each returned ``Project`` includes the count of active (non-superseded)
         memories as ``memory_count``.
         """
-        if status is not None:
-            rows = _rows_to_dicts(self._conn.execute(
-                """
-                SELECT p.*,
-                       (SELECT COUNT(*) FROM memories m
-                        WHERE m.project_id = p.id AND m.superseded_by IS NULL) AS memory_count
-                FROM projects p
-                WHERE p.status = ?
-                ORDER BY p.updated_at DESC
-                """,
-                (status,),
-            ))
-        else:
-            rows = _rows_to_dicts(self._conn.execute(
-                """
-                SELECT p.*,
-                       (SELECT COUNT(*) FROM memories m
-                        WHERE m.project_id = p.id AND m.superseded_by IS NULL) AS memory_count
-                FROM projects p
-                ORDER BY p.updated_at DESC
-                """
-            ))
+        with _connection(self._db_path) as conn:
+            if status is not None:
+                rows = _rows_to_dicts(conn.execute(
+                    """
+                    SELECT p.*,
+                           (SELECT COUNT(*) FROM memories m
+                            WHERE m.project_id = p.id AND m.superseded_by IS NULL) AS memory_count
+                    FROM projects p
+                    WHERE p.status = ?
+                    ORDER BY p.updated_at DESC
+                    """,
+                    (status,),
+                ))
+            else:
+                rows = _rows_to_dicts(conn.execute(
+                    """
+                    SELECT p.*,
+                           (SELECT COUNT(*) FROM memories m
+                            WHERE m.project_id = p.id AND m.superseded_by IS NULL) AS memory_count
+                    FROM projects p
+                    ORDER BY p.updated_at DESC
+                    """
+                ))
 
-        return [
-            _row_to_project(r, memory_count=r["memory_count"]) for r in rows
-        ]
+            return [
+                _row_to_project(r, memory_count=r["memory_count"]) for r in rows
+            ]
 
     def update_project(self, id: str, **kwargs: object) -> Project:
         """Update one or more fields on an existing project.
@@ -565,41 +588,43 @@ class MuninnStore:
         set_clause = ", ".join(f"{col} = ?" for col in updates)
         values = tuple(updates.values()) + (id,)
 
-        self._conn.execute("BEGIN")
-        try:
-            # Save current summary to revisions before updating
-            if "summary" in updates:
-                old_row = _row_to_dict(self._conn.execute(
-                    "SELECT summary FROM projects WHERE id = ?", (id,)
-                ))
-                if old_row is not None and old_row["summary"] is not None:
-                    self._conn.execute(
-                        "INSERT INTO project_summary_revisions (project_id, summary) VALUES (?, ?)",
-                        (id, old_row["summary"]),
-                    )
-                    self._conn.execute(
-                        """
-                        DELETE FROM project_summary_revisions
-                        WHERE project_id = ? AND id NOT IN (
-                            SELECT id FROM project_summary_revisions
-                            WHERE project_id = ?
-                            ORDER BY created_at DESC LIMIT 10
+        def _do(conn):
+            conn.execute("BEGIN")
+            try:
+                # Save current summary to revisions before updating
+                if "summary" in updates:
+                    old_row = _row_to_dict(conn.execute(
+                        "SELECT summary FROM projects WHERE id = ?", (id,)
+                    ))
+                    if old_row is not None and old_row["summary"] is not None:
+                        conn.execute(
+                            "INSERT INTO project_summary_revisions (project_id, summary) VALUES (?, ?)",
+                            (id, old_row["summary"]),
                         )
-                        """,
-                        (id, id),
-                    )
+                        conn.execute(
+                            """
+                            DELETE FROM project_summary_revisions
+                            WHERE project_id = ? AND id NOT IN (
+                                SELECT id FROM project_summary_revisions
+                                WHERE project_id = ?
+                                ORDER BY created_at DESC LIMIT 10
+                            )
+                            """,
+                            (id, id),
+                        )
 
-            cursor = self._conn.execute(
-                f"UPDATE projects SET {set_clause} WHERE id = ?",
-                tuple(values),
-            )
-            if cursor.rowcount == 0:
-                raise ValueError(f"Project {id!r} not found")
-            self._conn.commit()
-        except:
-            self._conn.rollback()
-            raise
+                cursor = conn.execute(
+                    f"UPDATE projects SET {set_clause} WHERE id = ?",
+                    tuple(values),
+                )
+                if cursor.rowcount == 0:
+                    raise ValueError(f"Project {id!r} not found")
+                conn.commit()
+            except:
+                conn.rollback()
+                raise
 
+        self._write_with_retry(_do)
         project = self.get_project(id)
         if project is None:
             raise ValueError(f"Project {id!r} not found after update")
@@ -610,12 +635,15 @@ class MuninnStore:
 
         Returns ``True`` if a project was updated, otherwise ``False``.
         """
-        cursor = self._conn.execute(
-            "UPDATE projects SET github_repo = ? WHERE id = ?",
-            (repo, project_id),
-        )
-        self._conn.commit()
-        return cursor.rowcount > 0
+        def _do(conn):
+            cursor = conn.execute(
+                "UPDATE projects SET github_repo = ? WHERE id = ?",
+                (repo, project_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+        return self._write_with_retry(_do)
 
     def delete_project(self, id: str) -> bool:
         """Delete a project and all associated data.
@@ -623,82 +651,89 @@ class MuninnStore:
         Cascade-deletes: memory_tags → memories → project_summary_revisions → projects.
         Returns ``True`` if the project existed and was deleted.
         """
-        # Check project exists.
-        row = _row_to_dict(self._conn.execute(
-            "SELECT id FROM projects WHERE id = ?", (id,)
-        ))
-        if row is None:
-            return False
+        def _do(conn):
+            # Check project exists.
+            row = _row_to_dict(conn.execute(
+                "SELECT id FROM projects WHERE id = ?", (id,)
+            ))
+            if row is None:
+                return False
 
-        self._conn.execute("BEGIN")
-        try:
-            # Cascade delete: tags for all project memories.
-            self._conn.execute(
-                """
-                DELETE FROM memory_tags WHERE memory_id IN (
-                    SELECT id FROM memories WHERE project_id = ?
+            conn.execute("BEGIN")
+            try:
+                # Cascade delete: tags for all project memories.
+                conn.execute(
+                    """
+                    DELETE FROM memory_tags WHERE memory_id IN (
+                        SELECT id FROM memories WHERE project_id = ?
+                    )
+                    """,
+                    (id,),
                 )
-                """,
-                (id,),
-            )
-            # Delete all memories.
-            self._conn.execute(
-                "DELETE FROM memories WHERE project_id = ?",
-                (id,),
-            )
-            # Delete summary revisions.
-            self._conn.execute(
-                "DELETE FROM project_summary_revisions WHERE project_id = ?",
-                (id,),
-            )
-            # Delete the project itself.
-            self._conn.execute(
-                "DELETE FROM projects WHERE id = ?",
-                (id,),
-            )
-            self._conn.commit()
-        except:
-            self._conn.rollback()
-            raise
-        return True
+                # Delete all memories.
+                conn.execute(
+                    "DELETE FROM memories WHERE project_id = ?",
+                    (id,),
+                )
+                # Delete summary revisions.
+                conn.execute(
+                    "DELETE FROM project_summary_revisions WHERE project_id = ?",
+                    (id,),
+                )
+                # Delete the project itself.
+                conn.execute(
+                    "DELETE FROM projects WHERE id = ?",
+                    (id,),
+                )
+                conn.commit()
+            except:
+                conn.rollback()
+                raise
+            return True
+
+        return self._write_with_retry(_do)
 
     def get_summary_revision(self, project_id: str) -> dict | None:
         """Return the previous summary revision (before latest update)."""
-        row = _row_to_dict(self._conn.execute(
-            "SELECT summary, created_at FROM project_summary_revisions "
-            "WHERE project_id = ? ORDER BY created_at DESC LIMIT 1",
-            (project_id,),
-        ))
-        if row is None:
-            return None
-        return {"previous_summary": row["summary"], "updated_at": row["created_at"]}
+        with _connection(self._db_path) as conn:
+            row = _row_to_dict(conn.execute(
+                "SELECT summary, created_at FROM project_summary_revisions "
+                "WHERE project_id = ? ORDER BY created_at DESC LIMIT 1",
+                (project_id,),
+            ))
+            if row is None:
+                return None
+            return {"previous_summary": row["summary"], "updated_at": row["created_at"]}
 
     def clear_summary_revision(self, project_id: str) -> None:
         """Clear revision (user acknowledged changes)."""
-        self._conn.execute(
-            "DELETE FROM project_summary_revisions WHERE project_id = ?",
-            (project_id,),
-        )
-        self._conn.commit()
+        def _do(conn):
+            conn.execute(
+                "DELETE FROM project_summary_revisions WHERE project_id = ?",
+                (project_id,),
+            )
+            conn.commit()
+
+        self._write_with_retry(_do)
 
     # ------------------------------------------------------------------
     # Instructions
     # ------------------------------------------------------------------
 
-    def _instructions_storage_mode(self, *, create_if_missing: bool) -> str:
+    def _instructions_storage_mode(self, conn, *, create_if_missing: bool) -> str:
         """Return the storage mode for the instructions table.
 
         Supports two schemas:
           - key/value (dashboard schema, key='global')
           - id/content (legacy single-row schema)
         """
-        rows = self._conn.execute("PRAGMA table_info(instructions)").fetchall()
+        rows = conn.execute("PRAGMA table_info(instructions)").fetchall()
         columns = {row[1] for row in rows}
 
         if not columns:
             if not create_if_missing:
                 return "missing"
-            self._conn.execute(
+            conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS instructions (
                     key TEXT PRIMARY KEY,
@@ -707,7 +742,7 @@ class MuninnStore:
                 )
                 """
             )
-            self._conn.execute(
+            conn.execute(
                 "INSERT OR IGNORE INTO instructions (key, value) VALUES ('global', '')"
             )
             return "key_value"
@@ -721,65 +756,69 @@ class MuninnStore:
     def get_instructions(self) -> str:
         """Get instructions from DB. Returns empty string if none."""
         try:
-            mode = self._instructions_storage_mode(create_if_missing=False)
+            with _connection(self._db_path) as conn:
+                mode = self._instructions_storage_mode(conn, create_if_missing=False)
 
-            if mode in {"missing", "unknown"}:
-                return ""
-            if mode == "key_value":
-                row = self._conn.execute(
-                    "SELECT value FROM instructions WHERE key = 'global' LIMIT 1"
-                ).fetchone()
-                return str(row[0]) if row and row[0] is not None else ""
-            if mode == "id_content":
-                row = self._conn.execute(
-                    "SELECT content FROM instructions ORDER BY id DESC LIMIT 1"
-                ).fetchone()
-                return str(row[0]) if row and row[0] is not None else ""
+                if mode in {"missing", "unknown"}:
+                    return ""
+                if mode == "key_value":
+                    row = conn.execute(
+                        "SELECT value FROM instructions WHERE key = 'global' LIMIT 1"
+                    ).fetchone()
+                    return str(row[0]) if row and row[0] is not None else ""
+                if mode == "id_content":
+                    row = conn.execute(
+                        "SELECT content FROM instructions ORDER BY id DESC LIMIT 1"
+                    ).fetchone()
+                    return str(row[0]) if row and row[0] is not None else ""
         except Exception:
             return ""
         return ""
 
     def update_instructions(self, content: str) -> None:
         """Update instructions in DB (upsert)."""
-        mode = self._instructions_storage_mode(create_if_missing=True)
-        now = _now_iso()
+        def _do(conn):
+            mode = self._instructions_storage_mode(conn, create_if_missing=True)
+            now = _now_iso()
 
-        if mode == "key_value":
-            self._conn.execute(
-                """
-                INSERT INTO instructions (key, value, updated_at)
-                VALUES ('global', ?, ?)
-                ON CONFLICT(key) DO UPDATE SET
-                    value = excluded.value,
-                    updated_at = excluded.updated_at
-                """,
-                (content, now),
-            )
-        elif mode == "id_content":
-            existing = self._conn.execute(
-                "SELECT id FROM instructions LIMIT 1"
-            ).fetchone()
-            if existing:
-                self._conn.execute(
+            if mode == "key_value":
+                conn.execute(
                     """
-                    UPDATE instructions
-                    SET content = ?, updated_at = ?
-                    WHERE id = ?
-                    """,
-                    (content, now, existing[0]),
-                )
-            else:
-                self._conn.execute(
-                    """
-                    INSERT INTO instructions (content, updated_at)
-                    VALUES (?, ?)
+                    INSERT INTO instructions (key, value, updated_at)
+                    VALUES ('global', ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value = excluded.value,
+                        updated_at = excluded.updated_at
                     """,
                     (content, now),
                 )
-        else:
-            raise RuntimeError("Unsupported instructions table schema")
+            elif mode == "id_content":
+                existing = conn.execute(
+                    "SELECT id FROM instructions LIMIT 1"
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        """
+                        UPDATE instructions
+                        SET content = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (content, now, existing[0]),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        INSERT INTO instructions (content, updated_at)
+                        VALUES (?, ?)
+                        """,
+                        (content, now),
+                    )
+            else:
+                raise RuntimeError("Unsupported instructions table schema")
 
-        self._conn.commit()
+            conn.commit()
+
+        self._write_with_retry(_do)
 
     # ------------------------------------------------------------------
     # Memory operations
@@ -806,38 +845,33 @@ class MuninnStore:
         now = _now_iso()
         tag_list = validate_tags(tags)
 
-        for attempt in range(5):
+        def _do(conn):
+            conn.execute("BEGIN")
             try:
-                self._conn.execute("BEGIN")
-                try:
-                    self._conn.execute(
-                        """
-                        INSERT INTO memories (id, project_id, content, depth, source, category, parent_memory_id, title, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (memory_id, project_id, content, 1, source, 'status', None, None, now, now),
+                conn.execute(
+                    """
+                    INSERT INTO memories (id, project_id, content, depth, source, category, parent_memory_id, title, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (memory_id, project_id, content, 1, source, 'status', None, None, now, now),
+                )
+
+                for tag in tag_list:
+                    conn.execute(
+                        "INSERT INTO memory_tags (memory_id, tag) VALUES (?, ?)",
+                        (memory_id, tag),
                     )
 
-                    for tag in tag_list:
-                        self._conn.execute(
-                            "INSERT INTO memory_tags (memory_id, tag) VALUES (?, ?)",
-                            (memory_id, tag),
-                        )
-
-                    self._conn.execute(
-                        "UPDATE projects SET updated_at = ? WHERE id = ?",
-                        (now, project_id),
-                    )
-                    self._conn.commit()
-                    break
-                except:
-                    self._conn.rollback()
-                    raise
-            except Exception as exc:
-                if "locked" in str(exc).lower() and attempt < 4:
-                    time.sleep(0.05 * (attempt + 1))
-                    continue
+                conn.execute(
+                    "UPDATE projects SET updated_at = ? WHERE id = ?",
+                    (now, project_id),
+                )
+                conn.commit()
+            except:
+                conn.rollback()
                 raise
+
+        self._write_with_retry(_do)
 
         return Memory(
             id=memory_id,
@@ -857,31 +891,32 @@ class MuninnStore:
 
     def get_latest_sync_memory(self, project_id: str) -> Memory | None:
         """Get the most recent active GitHub sync memory for a project."""
-        row = _row_to_dict(self._conn.execute(
-            """
-            SELECT m.*, GROUP_CONCAT(mt.tag) AS tags
-            FROM memories m
-            LEFT JOIN memory_tags mt ON m.id = mt.memory_id
-            WHERE m.project_id = ?
-              AND m.superseded_by IS NULL
-              AND EXISTS (
-                  SELECT 1
-                  FROM memory_tags mt2
-                  WHERE mt2.memory_id = m.id
-                    AND mt2.tag = 'github-sync'
-              )
-            GROUP BY m.id
-            ORDER BY m.updated_at DESC
-            LIMIT 1
-            """,
-            (project_id,),
-        ))
-        if row is None:
-            return None
+        with _connection(self._db_path) as conn:
+            row = _row_to_dict(conn.execute(
+                """
+                SELECT m.*, GROUP_CONCAT(mt.tag) AS tags
+                FROM memories m
+                LEFT JOIN memory_tags mt ON m.id = mt.memory_id
+                WHERE m.project_id = ?
+                  AND m.superseded_by IS NULL
+                  AND EXISTS (
+                      SELECT 1
+                      FROM memory_tags mt2
+                      WHERE mt2.memory_id = m.id
+                        AND mt2.tag = 'github-sync'
+                  )
+                GROUP BY m.id
+                ORDER BY m.updated_at DESC
+                LIMIT 1
+                """,
+                (project_id,),
+            ))
+            if row is None:
+                return None
 
-        tags_raw = row.get("tags")
-        tags = tuple(sorted({tag for tag in tags_raw.split(",") if tag})) if tags_raw else ()
-        return _row_to_memory(row, tags=tags)
+            tags_raw = row.get("tags")
+            tags = tuple(sorted({tag for tag in tags_raw.split(",") if tag})) if tags_raw else ()
+            return _row_to_memory(row, tags=tags)
 
     def recall(
         self,
@@ -911,75 +946,76 @@ class MuninnStore:
         and stats is a dict with keys: chars_loaded, chars_budget,
         memories_loaded, memories_dropped.
         """
-        # Determine which projects to load.
-        if project_id is not None:
-            project_ids = [project_id]
-        else:
-            rows = _rows_to_dicts(self._conn.execute(
-                "SELECT id FROM projects WHERE status = 'active'"
-            ))
-            project_ids = [r["id"] for r in rows]
+        with _connection(self._db_path) as conn:
+            # Determine which projects to load.
+            if project_id is not None:
+                project_ids = [project_id]
+            else:
+                rows = _rows_to_dicts(conn.execute(
+                    "SELECT id FROM projects WHERE status = 'active'"
+                ))
+                project_ids = [r["id"] for r in rows]
 
-        if not project_ids:
-            return {}, {"chars_loaded": 0, "chars_budget": max_chars, "memories_loaded": 0, "memories_dropped": 0}
+            if not project_ids:
+                return {}, {"chars_loaded": 0, "chars_budget": max_chars, "memories_loaded": 0, "memories_dropped": 0}
 
-        placeholders = ",".join("?" for _ in project_ids)
-        where_clause = f"""
-            project_id IN ({placeholders})
-            AND superseded_by IS NULL
-        """
-        params: list[object] = list(project_ids)
+            placeholders = ",".join("?" for _ in project_ids)
+            where_clause = f"""
+                project_id IN ({placeholders})
+                AND superseded_by IS NULL
+            """
+            params: list[object] = list(project_ids)
 
-        # Tag filter: require ALL tags present.
-        if tags:
-            for tag in tags:
-                where_clause += """
-                    AND id IN (
-                        SELECT memory_id FROM memory_tags WHERE tag = ?
-                    )
-                """
-                params.append(tag)
+            # Tag filter: require ALL tags present.
+            if tags:
+                for tag in tags:
+                    where_clause += """
+                        AND id IN (
+                            SELECT memory_id FROM memory_tags WHERE tag = ?
+                        )
+                    """
+                    params.append(tag)
 
-        count_query = f"SELECT COUNT(*) AS cnt FROM memories WHERE {where_clause}"
-        count_row = _row_to_dict(self._conn.execute(count_query, tuple(params)))
-        total_matching = int(count_row["cnt"]) if count_row is not None else 0
+            count_query = f"SELECT COUNT(*) AS cnt FROM memories WHERE {where_clause}"
+            count_row = _row_to_dict(conn.execute(count_query, tuple(params)))
+            total_matching = int(count_row["cnt"]) if count_row is not None else 0
 
-        query = f"""
-            SELECT * FROM memories
-            WHERE {where_clause}
-            ORDER BY updated_at DESC
-            LIMIT 50
-        """
+            query = f"""
+                SELECT * FROM memories
+                WHERE {where_clause}
+                ORDER BY updated_at DESC
+                LIMIT 50
+            """
 
-        mem_rows = _rows_to_dicts(self._conn.execute(query, tuple(params)))
+            mem_rows = _rows_to_dicts(conn.execute(query, tuple(params)))
 
-        # Batch-fetch tags.
-        mem_ids = [r["id"] for r in mem_rows]
-        tags_map = _fetch_tags_for_memories(self._conn, mem_ids)
+            # Batch-fetch tags.
+            mem_ids = [r["id"] for r in mem_rows]
+            tags_map = _fetch_tags_for_memories(conn, mem_ids)
 
-        # Accumulate within character budget.
-        result: dict[str, list[Memory]] = {}
-        char_count = 0
-        loaded_count = 0
-        for r in mem_rows:
-            content_len = len(r["content"])
-            if char_count + content_len > max_chars:
-                break
-            char_count += content_len
-            loaded_count += 1
-            memory = _row_to_memory(r, tags=tags_map.get(r["id"], ()))
-            result.setdefault(memory.project_id, []).append(memory)
+            # Accumulate within character budget.
+            result: dict[str, list[Memory]] = {}
+            char_count = 0
+            loaded_count = 0
+            for r in mem_rows:
+                content_len = len(r["content"])
+                if char_count + content_len > max_chars:
+                    break
+                char_count += content_len
+                loaded_count += 1
+                memory = _row_to_memory(r, tags=tags_map.get(r["id"], ()))
+                result.setdefault(memory.project_id, []).append(memory)
 
-        dropped_count = max(total_matching - loaded_count, 0)
+            dropped_count = max(total_matching - loaded_count, 0)
 
-        stats = {
-            "chars_loaded": char_count,
-            "chars_budget": max_chars,
-            "memories_loaded": loaded_count,
-            "memories_dropped": dropped_count,
-        }
+            stats = {
+                "chars_loaded": char_count,
+                "chars_budget": max_chars,
+                "memories_loaded": loaded_count,
+                "memories_dropped": dropped_count,
+            }
 
-        return result, stats
+            return result, stats
 
     def search(
         self,
@@ -993,44 +1029,45 @@ class MuninnStore:
         Results are sorted by FTS5 relevance (``rank``), then ``updated_at``
         descending.
         """
-        sql = """
-            SELECT m.*
-            FROM memories m
-            JOIN memories_fts f ON m.rowid = f.rowid
-            WHERE memories_fts MATCH ?
-              AND m.superseded_by IS NULL
-        """
-        # Wrap query in double-quotes to treat it as a literal phrase
-        # and avoid FTS5 syntax errors from special characters.
-        safe_query = '"' + query.replace('"', '""') + '"'
-        params: list[object] = [safe_query]
+        with _connection(self._db_path) as conn:
+            sql = """
+                SELECT m.*
+                FROM memories m
+                JOIN memories_fts f ON m.rowid = f.rowid
+                WHERE memories_fts MATCH ?
+                  AND m.superseded_by IS NULL
+            """
+            # Wrap query in double-quotes to treat it as a literal phrase
+            # and avoid FTS5 syntax errors from special characters.
+            safe_query = '"' + query.replace('"', '""') + '"'
+            params: list[object] = [safe_query]
 
-        if project_id is not None:
-            sql += " AND m.project_id = ?"
-            params.append(project_id)
+            if project_id is not None:
+                sql += " AND m.project_id = ?"
+                params.append(project_id)
 
-        if tags:
-            for tag in tags:
-                sql += """
-                    AND m.id IN (
-                        SELECT memory_id FROM memory_tags WHERE tag = ?
-                    )
-                """
-                params.append(tag)
+            if tags:
+                for tag in tags:
+                    sql += """
+                        AND m.id IN (
+                            SELECT memory_id FROM memory_tags WHERE tag = ?
+                        )
+                    """
+                    params.append(tag)
 
-        sql += " ORDER BY f.rank, m.updated_at DESC"
-        sql += " LIMIT ?"
-        params.append(limit)
+            sql += " ORDER BY f.rank, m.updated_at DESC"
+            sql += " LIMIT ?"
+            params.append(limit)
 
-        rows = _rows_to_dicts(self._conn.execute(sql, tuple(params)))
+            rows = _rows_to_dicts(conn.execute(sql, tuple(params)))
 
-        mem_ids = [r["id"] for r in rows]
-        tags_map = _fetch_tags_for_memories(self._conn, mem_ids)
+            mem_ids = [r["id"] for r in rows]
+            tags_map = _fetch_tags_for_memories(conn, mem_ids)
 
-        return [
-            _row_to_memory(r, tags=tags_map.get(r["id"], ()))
-            for r in rows
-        ]
+            return [
+                _row_to_memory(r, tags=tags_map.get(r["id"], ()))
+                for r in rows
+            ]
 
     def _resolve_memory_id(self, conn: Any, memory_id: str) -> str | None:
         """Resolve a full or prefix memory ID to the actual full ID.
@@ -1063,19 +1100,23 @@ class MuninnStore:
         Returns ``True`` if the memory existed and was updated.
         """
         now = _now_iso()
-        resolved = self._resolve_memory_id(self._conn, memory_id)
-        if resolved is None:
-            return False
-        cursor = self._conn.execute(
-            """
-            UPDATE memories
-            SET superseded_by = '_deleted', updated_at = ?
-            WHERE id = ? AND superseded_by IS NULL
-            """,
-            (now, resolved),
-        )
-        self._conn.commit()
-        return cursor.rowcount > 0
+
+        def _do(conn):
+            resolved = self._resolve_memory_id(conn, memory_id)
+            if resolved is None:
+                return False
+            cursor = conn.execute(
+                """
+                UPDATE memories
+                SET superseded_by = '_deleted', updated_at = ?
+                WHERE id = ? AND superseded_by IS NULL
+                """,
+                (now, resolved),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+        return self._write_with_retry(_do)
 
     def update_memory(
         self,
@@ -1090,67 +1131,72 @@ class MuninnStore:
         or None if the memory was not found or is superseded.
         """
         now = _now_iso()
-        # Resolve prefix to full ID
-        resolved_id = self._resolve_memory_id(self._conn, memory_id)
-        if resolved_id is None:
-            return None
-        memory_id = resolved_id
 
-        # Check memory exists and is not superseded
-        row = _row_to_dict(self._conn.execute(
-            "SELECT * FROM memories WHERE id = ? AND superseded_by IS NULL",
-            (memory_id,),
-        ))
-        if row is None:
-            return None
+        def _do(conn):
+            # Resolve prefix to full ID
+            resolved_id = self._resolve_memory_id(conn, memory_id)
+            if resolved_id is None:
+                return None
+            actual_id = resolved_id
 
-        # Build update SET clause
-        updates: dict[str, object] = {"updated_at": now}
-        if content is not None:
-            validate_memory_content(content)
-            updates["content"] = content
+            # Check memory exists and is not superseded
+            row = _row_to_dict(conn.execute(
+                "SELECT * FROM memories WHERE id = ? AND superseded_by IS NULL",
+                (actual_id,),
+            ))
+            if row is None:
+                return None
 
-        set_clause = ", ".join(f"{col} = ?" for col in updates)
-        values = tuple(updates.values()) + (memory_id,)
-        self._conn.execute("BEGIN")
-        try:
-            self._conn.execute(
-                f"UPDATE memories SET {set_clause} WHERE id = ?",
-                values,
-            )
+            # Build update SET clause
+            updates: dict[str, object] = {"updated_at": now}
+            if content is not None:
+                validate_memory_content(content)
+                updates["content"] = content
 
-            # Update tags if provided
-            if tags is not None:
-                validated_tags = validate_tags(tags)
-                self._conn.execute(
-                    "DELETE FROM memory_tags WHERE memory_id = ?",
-                    (memory_id,),
+            set_clause = ", ".join(f"{col} = ?" for col in updates)
+            values = tuple(updates.values()) + (actual_id,)
+
+            conn.execute("BEGIN")
+            try:
+                conn.execute(
+                    f"UPDATE memories SET {set_clause} WHERE id = ?",
+                    values,
                 )
-                for tag in validated_tags:
-                    self._conn.execute(
-                        "INSERT INTO memory_tags (memory_id, tag) VALUES (?, ?)",
-                        (memory_id, tag),
+
+                # Update tags if provided
+                if tags is not None:
+                    validated_tags = validate_tags(tags)
+                    conn.execute(
+                        "DELETE FROM memory_tags WHERE memory_id = ?",
+                        (actual_id,),
                     )
+                    for tag in validated_tags:
+                        conn.execute(
+                            "INSERT INTO memory_tags (memory_id, tag) VALUES (?, ?)",
+                            (actual_id, tag),
+                        )
 
-            # Bump project updated_at
-            self._conn.execute(
-                "UPDATE projects SET updated_at = ? WHERE id = ?",
-                (now, row["project_id"]),
-            )
+                # Bump project updated_at
+                conn.execute(
+                    "UPDATE projects SET updated_at = ? WHERE id = ?",
+                    (now, row["project_id"]),
+                )
 
-            self._conn.commit()
-        except:
-            self._conn.rollback()
-            raise
+                conn.commit()
+            except:
+                conn.rollback()
+                raise
 
-        # Re-fetch to get final state
-        updated_row = _row_to_dict(self._conn.execute(
-            "SELECT * FROM memories WHERE id = ?",
-            (memory_id,),
-        ))
-        final_tags = _fetch_tags_for_memory(self._conn, memory_id)
+            # Re-fetch to get final state
+            updated_row = _row_to_dict(conn.execute(
+                "SELECT * FROM memories WHERE id = ?",
+                (actual_id,),
+            ))
+            final_tags = _fetch_tags_for_memory(conn, actual_id)
 
-        return _row_to_memory(updated_row, tags=final_tags)
+            return _row_to_memory(updated_row, tags=final_tags)
+
+        return self._write_with_retry(_do)
 
     def supersede_memory(self, old_id: str, new_id: str) -> bool:
         """Mark the old memory as superseded by the new memory.
@@ -1158,16 +1204,20 @@ class MuninnStore:
         Returns ``True`` if the old memory existed and was updated.
         """
         now = _now_iso()
-        cursor = self._conn.execute(
-            """
-            UPDATE memories
-            SET superseded_by = ?, updated_at = ?
-            WHERE id = ? AND superseded_by IS NULL
-            """,
-            (new_id, now, old_id),
-        )
-        self._conn.commit()
-        return cursor.rowcount > 0
+
+        def _do(conn):
+            cursor = conn.execute(
+                """
+                UPDATE memories
+                SET superseded_by = ?, updated_at = ?
+                WHERE id = ? AND superseded_by IS NULL
+                """,
+                (new_id, now, old_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+        return self._write_with_retry(_do)
 
     def batch_supersede(self, old_ids: list[str], new_id: str) -> int:
         """Mark multiple memories as superseded by the same new memory.
@@ -1179,16 +1229,20 @@ class MuninnStore:
 
         placeholders = ",".join("?" * len(old_ids))
         now = _now_iso()
-        cursor = self._conn.execute(
-            f"""
-            UPDATE memories
-            SET superseded_by = ?, updated_at = ?
-            WHERE id IN ({placeholders}) AND superseded_by IS NULL
-            """,
-            (new_id, now, *old_ids),
-        )
-        self._conn.commit()
-        return cursor.rowcount
+
+        def _do(conn):
+            cursor = conn.execute(
+                f"""
+                UPDATE memories
+                SET superseded_by = ?, updated_at = ?
+                WHERE id IN ({placeholders}) AND superseded_by IS NULL
+                """,
+                (new_id, now, *old_ids),
+            )
+            conn.commit()
+            return cursor.rowcount
+
+        return self._write_with_retry(_do)
 
     # ------------------------------------------------------------------
     # Dashboard queries
@@ -1196,39 +1250,41 @@ class MuninnStore:
 
     def get_memory(self, memory_id: str) -> Memory | None:
         """Fetch a single memory by full or prefix ID, including tags."""
-        resolved = self._resolve_memory_id(self._conn, memory_id)
-        if resolved is None:
-            return None
-        row = _row_to_dict(self._conn.execute(
-            "SELECT * FROM memories WHERE id = ?", (resolved,)
-        ))
-        if row is None:
-            return None
-        tags = _fetch_tags_for_memory(self._conn, resolved)
-        return _row_to_memory(row, tags=tags)
+        with _connection(self._db_path) as conn:
+            resolved = self._resolve_memory_id(conn, memory_id)
+            if resolved is None:
+                return None
+            row = _row_to_dict(conn.execute(
+                "SELECT * FROM memories WHERE id = ?", (resolved,)
+            ))
+            if row is None:
+                return None
+            tags = _fetch_tags_for_memory(conn, resolved)
+            return _row_to_memory(row, tags=tags)
 
     def get_all_tags(self, project_id: str | None = None) -> list[str]:
         """Return all distinct tags, optionally scoped to a project."""
-        if project_id is not None:
-            rows = _rows_to_dicts(self._conn.execute(
-                """
-                SELECT DISTINCT mt.tag FROM memory_tags mt
-                JOIN memories m ON mt.memory_id = m.id
-                WHERE m.project_id = ? AND m.superseded_by IS NULL
-                ORDER BY mt.tag
-                """,
-                (project_id,),
-            ))
-        else:
-            rows = _rows_to_dicts(self._conn.execute(
-                """
-                SELECT DISTINCT mt.tag FROM memory_tags mt
-                JOIN memories m ON mt.memory_id = m.id
-                WHERE m.superseded_by IS NULL
-                ORDER BY mt.tag
-                """
-            ))
-        return [r["tag"] for r in rows]
+        with _connection(self._db_path) as conn:
+            if project_id is not None:
+                rows = _rows_to_dicts(conn.execute(
+                    """
+                    SELECT DISTINCT mt.tag FROM memory_tags mt
+                    JOIN memories m ON mt.memory_id = m.id
+                    WHERE m.project_id = ? AND m.superseded_by IS NULL
+                    ORDER BY mt.tag
+                    """,
+                    (project_id,),
+                ))
+            else:
+                rows = _rows_to_dicts(conn.execute(
+                    """
+                    SELECT DISTINCT mt.tag FROM memory_tags mt
+                    JOIN memories m ON mt.memory_id = m.id
+                    WHERE m.superseded_by IS NULL
+                    ORDER BY mt.tag
+                    """
+                ))
+            return [r["tag"] for r in rows]
 
     def get_supersede_chain(self, memory_id: str) -> list[Memory]:
         """Return the full supersede chain for a memory (oldest first).
@@ -1236,74 +1292,76 @@ class MuninnStore:
         Traces backward (who did this memory supersede?) and forward
         (who superseded this memory?) to build the complete chain.
         """
-        resolved = self._resolve_memory_id(self._conn, memory_id)
-        if resolved is None:
-            return []
+        with _connection(self._db_path) as conn:
+            resolved = self._resolve_memory_id(conn, memory_id)
+            if resolved is None:
+                return []
 
-        chain_rows = _rows_to_dicts(self._conn.execute(
-            """
-            WITH RECURSIVE chain(id) AS (
-                SELECT id FROM memories WHERE id = ?
-                UNION
-                SELECT m.id
-                FROM memories m
-                JOIN chain c ON m.superseded_by = c.id
-                UNION
-                SELECT m.superseded_by
-                FROM memories m
-                JOIN chain c ON m.id = c.id
-                WHERE m.superseded_by IS NOT NULL
-                  AND m.superseded_by != '_deleted'
-            )
-            SELECT DISTINCT id FROM chain
-            """,
-            (resolved,),
-        ))
-        chain_ids = [r["id"] for r in chain_rows]
+            chain_rows = _rows_to_dicts(conn.execute(
+                """
+                WITH RECURSIVE chain(id) AS (
+                    SELECT id FROM memories WHERE id = ?
+                    UNION
+                    SELECT m.id
+                    FROM memories m
+                    JOIN chain c ON m.superseded_by = c.id
+                    UNION
+                    SELECT m.superseded_by
+                    FROM memories m
+                    JOIN chain c ON m.id = c.id
+                    WHERE m.superseded_by IS NOT NULL
+                      AND m.superseded_by != '_deleted'
+                )
+                SELECT DISTINCT id FROM chain
+                """,
+                (resolved,),
+            ))
+            chain_ids = [r["id"] for r in chain_rows]
 
-        if not chain_ids:
-            return []
+            if not chain_ids:
+                return []
 
-        # Fetch full memory objects for all chain members.
-        placeholders = ",".join("?" for _ in chain_ids)
-        rows = _rows_to_dicts(self._conn.execute(
-            f"SELECT * FROM memories WHERE id IN ({placeholders}) ORDER BY created_at ASC",
-            tuple(chain_ids),
-        ))
-        mem_ids = [r["id"] for r in rows]
-        tags_map = _fetch_tags_for_memories(self._conn, mem_ids)
+            # Fetch full memory objects for all chain members.
+            placeholders = ",".join("?" for _ in chain_ids)
+            rows = _rows_to_dicts(conn.execute(
+                f"SELECT * FROM memories WHERE id IN ({placeholders}) ORDER BY created_at ASC",
+                tuple(chain_ids),
+            ))
+            mem_ids = [r["id"] for r in rows]
+            tags_map = _fetch_tags_for_memories(conn, mem_ids)
 
-        return [
-            _row_to_memory(r, tags=tags_map.get(r["id"], ()))
-            for r in rows
-        ]
+            return [
+                _row_to_memory(r, tags=tags_map.get(r["id"], ()))
+                for r in rows
+            ]
 
     def search_projects(self, query: str, limit: int = 20) -> list[Project]:
         """Search non-archived projects by FTS5 over name + summary."""
-        terms = [term for term in query.split() if term.strip()]
-        if not terms:
-            return []
-        safe_query = " ".join(
-            '"' + term.replace('"', '""') + '"' for term in terms
-        )
-        rows = _rows_to_dicts(self._conn.execute(
-            """
-            SELECT p.*,
-                   snippet(projects_fts, -1, '[', ']', '...', 20) AS search_snippet,
-                   (SELECT COUNT(*) FROM memories m
-                    WHERE m.project_id = p.id AND m.superseded_by IS NULL) AS memory_count
-            FROM projects p
-            JOIN projects_fts pf ON p.rowid = pf.rowid
-            WHERE projects_fts MATCH ?
-              AND p.status != 'archived'
-            ORDER BY pf.rank
-            LIMIT ?
-            """,
-            (safe_query, limit),
-        ))
-        return [
-            _row_to_project(r, memory_count=r["memory_count"]) for r in rows
-        ]
+        with _connection(self._db_path) as conn:
+            terms = [term for term in query.split() if term.strip()]
+            if not terms:
+                return []
+            safe_query = " ".join(
+                '"' + term.replace('"', '""') + '"' for term in terms
+            )
+            rows = _rows_to_dicts(conn.execute(
+                """
+                SELECT p.*,
+                       snippet(projects_fts, -1, '[', ']', '...', 20) AS search_snippet,
+                       (SELECT COUNT(*) FROM memories m
+                        WHERE m.project_id = p.id AND m.superseded_by IS NULL) AS memory_count
+                FROM projects p
+                JOIN projects_fts pf ON p.rowid = pf.rowid
+                WHERE projects_fts MATCH ?
+                  AND p.status != 'archived'
+                ORDER BY pf.rank
+                LIMIT ?
+                """,
+                (safe_query, limit),
+            ))
+            return [
+                _row_to_project(r, memory_count=r["memory_count"]) for r in rows
+            ]
 
     def reset_data(self) -> None:
         """Wipe all memories, tags, and revisions. Clear all project summaries.
@@ -1311,42 +1369,47 @@ class MuninnStore:
         Projects themselves are kept but their summaries are set to NULL.
         """
         now = _now_iso()
-        self._conn.execute("BEGIN")
-        try:
-            self._conn.execute("DELETE FROM memory_tags")
-            self._conn.execute("DELETE FROM memories")
-            self._conn.execute("DELETE FROM project_summary_revisions")
-            self._conn.execute(
-                "UPDATE projects SET summary = NULL, updated_at = ?",
-                (now,),
-            )
-            self._conn.commit()
-        except:
-            self._conn.rollback()
-            raise
+
+        def _do(conn):
+            conn.execute("BEGIN")
+            try:
+                conn.execute("DELETE FROM memory_tags")
+                conn.execute("DELETE FROM memories")
+                conn.execute("DELETE FROM project_summary_revisions")
+                conn.execute(
+                    "UPDATE projects SET summary = NULL, updated_at = ?",
+                    (now,),
+                )
+                conn.commit()
+            except:
+                conn.rollback()
+                raise
+
+        self._write_with_retry(_do)
 
     def get_dashboard_stats(self) -> dict[str, int]:
         """Return aggregate statistics for the dashboard overview."""
-        proj_row = _row_to_dict(self._conn.execute(
-            "SELECT COUNT(*) AS cnt FROM projects"
-        ))
-        active_row = _row_to_dict(self._conn.execute(
-            "SELECT COUNT(*) AS cnt FROM projects WHERE status = 'active'"
-        ))
-        mem_row = _row_to_dict(self._conn.execute(
-            "SELECT COUNT(*) AS cnt FROM memories WHERE superseded_by IS NULL"
-        ))
-        stale_row = _row_to_dict(self._conn.execute(
-            """
-            SELECT COUNT(*) AS cnt FROM projects
-            WHERE status = 'active'
-              AND updated_at < datetime('now', '-7 days')
-            """,
-        ))
+        with _connection(self._db_path) as conn:
+            proj_row = _row_to_dict(conn.execute(
+                "SELECT COUNT(*) AS cnt FROM projects"
+            ))
+            active_row = _row_to_dict(conn.execute(
+                "SELECT COUNT(*) AS cnt FROM projects WHERE status = 'active'"
+            ))
+            mem_row = _row_to_dict(conn.execute(
+                "SELECT COUNT(*) AS cnt FROM memories WHERE superseded_by IS NULL"
+            ))
+            stale_row = _row_to_dict(conn.execute(
+                """
+                SELECT COUNT(*) AS cnt FROM projects
+                WHERE status = 'active'
+                  AND updated_at < datetime('now', '-7 days')
+                """,
+            ))
 
-        return {
-            "total_projects": proj_row["cnt"] if proj_row else 0,
-            "active_projects": active_row["cnt"] if active_row else 0,
-            "total_memories": mem_row["cnt"] if mem_row else 0,
-            "stale_projects": stale_row["cnt"] if stale_row else 0,
-        }
+            return {
+                "total_projects": proj_row["cnt"] if proj_row else 0,
+                "active_projects": active_row["cnt"] if active_row else 0,
+                "total_memories": mem_row["cnt"] if mem_row else 0,
+                "stale_projects": stale_row["cnt"] if stale_row else 0,
+            }
