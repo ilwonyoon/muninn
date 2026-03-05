@@ -111,11 +111,12 @@ launchctl kickstart -k gui/$(id -u)/com.muninn.server
 - **Literal enum on action** — `muninn_manage` uses `Literal[...]` so JSON schema includes enum for LLM discovery
 - **Editable instructions** — MCP instructions are read from `~/.local/share/muninn/instructions.md` (auto-created with defaults on first run, `--reset` deletes it)
 
-## MCP Tools (6 total)
+## MCP Tools (7 total)
 
 | Tool | Purpose |
 |------|---------|
 | `muninn_save` | Save/update a project document (structured markdown one-pager) |
+| `muninn_save_memory` | Save a memory (progress entry) to a project's timeline |
 | `muninn_recall` | Load project document(s) — one project or all active |
 | `muninn_search` | Keyword search across project documents |
 | `muninn_status` | List all projects with status overview |
@@ -148,11 +149,10 @@ Documents must be structured markdown with `## ` headers. Plain text is rejected
 ## Muninn Auto-Save
 
 git commit 후 commit 메시지가 `feat:` 또는 `refactor:`이면:
-1. `muninn_recall(project="muninn")` → 현재 문서 확인
-2. git에 없는 정보(why, topology, ops, state)만 문서에 머지
-3. `muninn_save(project="muninn", content="<머지된 문서>")`로 업데이트
+1. `muninn_save_memory(project="muninn", content="<요약>", tags=["auto-save"])`로 progress 기록
+2. content에는 git에 없는 정보만: 변경 동기, 아키텍처 변경, 운영 영향
 
-세부 규칙은 Muninn MCP instructions 참조.
+프로젝트 문서(`muninn_save`)는 필요할 때 수동으로 업데이트.
 
 ## Coding Conventions
 

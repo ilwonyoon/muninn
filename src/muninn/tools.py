@@ -18,6 +18,7 @@ from muninn.formatter import (
     format_document_saved,
     format_document_search,
     format_manage_result,
+    format_memory_saved,
     format_status,
 )
 from muninn.models import Project, ProjectStatus, validate_project_status
@@ -304,6 +305,38 @@ def muninn_manage(
 
     except Exception as exc:
         return f"Error in manage ({action}): {exc}"
+
+
+def muninn_save_memory(
+    project: str,
+    content: str,
+    tags: list[str] | None = None,
+) -> str:
+    """Save a memory (progress entry) to a project.
+
+    Use for recording milestones, decisions, or status updates.
+    Unlike muninn_save (which replaces the project document),
+    this appends a new entry to the project's memory timeline.
+    """
+    _log_usage("muninn_save_memory", project=project)
+    try:
+        if not content or not content.strip():
+            return "Error: 'content' must not be empty."
+
+        store = _get_store()
+        existing = store.get_project(project)
+        if existing is None:
+            return f"Error: project '{project}' not found."
+
+        memory = store.save_memory(
+            project_id=project,
+            content=content,
+            source="conversation",
+            tags=tags,
+        )
+        return format_memory_saved(memory.id, project)
+    except Exception as exc:
+        return f"Error saving memory: {exc}"
 
 
 def muninn_sync(project: str) -> str:

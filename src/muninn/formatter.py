@@ -199,6 +199,19 @@ def format_status(projects: list[Project]) -> str:
     return "\n".join(lines)
 
 
+def format_memory_saved(memory_id: str, project_id: str) -> str:
+    """Format a confirmation after saving a memory entry.
+
+    Args:
+        memory_id: The hex ID of the newly created memory.
+        project_id: The project the memory was saved to.
+
+    Returns:
+        Plain-text confirmation string.
+    """
+    return f"\u2705 Memory saved to {project_id} (id: {memory_id[:8]})"
+
+
 def format_manage_result(action: str, details: str) -> str:
     """Format a simple confirmation for manage actions.
 

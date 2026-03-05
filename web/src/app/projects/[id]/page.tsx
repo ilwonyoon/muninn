@@ -11,8 +11,8 @@ import { cn } from "@/lib/utils";
 import { StatusDot } from "@/components/muninn/status-dot";
 import { ProjectDocumentView } from "@/components/muninn/project-document-view";
 import { ProjectProgressView } from "@/components/muninn/project-progress-view";
-import { ProjectTimelineView } from "@/components/muninn/project-timeline-view";
-import { MemoryDetailPanel } from "@/components/muninn/memory-detail-panel";
+
+
 import { SaveMemoryDialog } from "@/components/muninn/save-memory-dialog";
 import {
   DropdownMenu,
@@ -29,15 +29,11 @@ export default function ProjectDetailPage() {
   const { toast } = useAppToast();
   const projectId = params.id;
 
-  const { project, allMemories, loading, refetch } =
+  const { project, loading, refetch } =
     useProjectMemories(projectId);
 
-  const [panelMemoryId, setPanelMemoryId] = useState<string | null>(null);
   const [saveOpen, setSaveOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"product" | "progress" | "timeline">("product");
-
-  // Memories sorted by updated_at DESC (already from API)
-  const memories = allMemories;
+  const [activeTab, setActiveTab] = useState<"product" | "progress">("product");
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -45,21 +41,14 @@ export default function ProjectDetailPage() {
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 
-      switch (e.key) {
-        case "n":
-          e.preventDefault();
-          setSaveOpen(true);
-          break;
-        case "Escape":
-          if (panelMemoryId) {
-            setPanelMemoryId(null);
-          }
-          break;
+      if (e.key === "n") {
+        e.preventDefault();
+        setSaveOpen(true);
       }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [panelMemoryId]);
+  }, []);
 
   const handleStatusChange = async (next: Project["status"]) => {
     if (!project || next === project.status) return;
@@ -95,12 +84,7 @@ export default function ProjectDetailPage() {
   return (
     <div className="flex h-full">
       {/* Main list pane */}
-      <div
-        className={cn(
-          "flex-1 overflow-y-auto scrollbar-hide px-6 py-8 mx-auto max-w-4xl",
-          panelMemoryId && "hidden md:block"
-        )}
-      >
+      <div className="flex-1 overflow-y-auto scrollbar-hide px-6 py-8 mx-auto max-w-4xl">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -154,7 +138,6 @@ export default function ProjectDetailPage() {
           {([
             { key: "product", label: "Product" },
             { key: "progress", label: "Progress" },
-            { key: "timeline", label: "Timeline" },
           ] as const).map((tab) => (
             <button
               key={tab.key}
@@ -181,31 +164,8 @@ export default function ProjectDetailPage() {
           {activeTab === "progress" && (
             <ProjectProgressView projectId={projectId} onMemoryCreated={refetch} />
           )}
-
-          {activeTab === "timeline" && (
-            <ProjectTimelineView
-              memories={memories}
-              onSelectMemory={(shortId) => setPanelMemoryId(shortId)}
-            />
-          )}
         </div>
       </div>
-
-      {/* Side panel */}
-      {panelMemoryId && (
-        <aside className="w-full border-l border-border bg-card animate-slide-in-from-right md:w-[45%] md:min-w-[400px]">
-          <MemoryDetailPanel
-            memoryId={panelMemoryId}
-            projectId={projectId}
-            onClose={() => setPanelMemoryId(null)}
-            onUpdated={refetch}
-            onDeleted={() => {
-              setPanelMemoryId(null);
-              refetch();
-            }}
-          />
-        </aside>
-      )}
 
       {/* Save dialog */}
       <SaveMemoryDialog

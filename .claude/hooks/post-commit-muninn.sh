@@ -59,18 +59,16 @@ FILES_CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null | wc -l | tr -d ' '
 # 프롬프트 텍스트 구성
 PROMPT="[MUNINN AUTO-SAVE] commit detected: \"$COMMIT_MSG\" ($FILES_CHANGED files changed)
 
-이 커밋은 feat/refactor이므로 Muninn 프로젝트 문서를 업데이트하세요:
+이 커밋은 feat/refactor이므로 Muninn progress에 기록하세요:
 
-1. muninn_recall(project=\"$PROJECT\")로 현재 문서 로드
-2. 이번 변경에서 git에 없는 정보만 추출:
-   - 왜 이 변경을 했는지 (동기/트레이드오프)
-   - 아키텍처/인프라 구조 변경
-   - 운영 시 알아야 할 사항
-   - 기능 현황 업데이트 (현재 상태로 교체, 히스토리 아님)
-3. 기존 문서의 해당 섹션을 수정/추가 (같은 주제면 교체)
-4. muninn_save(project=\"$PROJECT\", content=\"<머지된 전체 문서>\")
+muninn_save_memory(
+  project=\"$PROJECT\",
+  content=\"<커밋의 핵심 변경 요약 — 왜 이 변경을 했는지, 아키텍처 변경사항>\",
+  tags=[\"auto-save\", \"progress\"]
+)
 
-반영하지 않을 것: 코드 diff, 파일명, 테스트 결과, 빌드 로그"
+content에 포함할 것: 변경 동기, 아키텍처/구조 변경, 운영 영향
+content에 포함하지 않을 것: 코드 diff, 파일명, 테스트 결과"
 
 # JSON additionalContext로 출력 (stdout에 JSON만 출력해야 함)
 jq -n --arg ctx "$PROMPT" '{

@@ -15,6 +15,7 @@ from muninn.tools import (
     muninn_manage,
     muninn_recall,
     muninn_save,
+    muninn_save_memory,
     muninn_search,
     muninn_status,
 )
@@ -394,6 +395,44 @@ class TestMuninnManageUnknownAction:
 
         assert "Error" in result
         assert "teleport" in result
+
+
+# ---------------------------------------------------------------------------
+# muninn_save_memory
+# ---------------------------------------------------------------------------
+
+
+class TestMuninnSaveMemory:
+    def test_save_memory_to_existing_project(self, initialized_store):
+        """Saving a memory to an existing project succeeds."""
+        initialized_store.create_project(id="proj", name="P")
+        result = muninn_save_memory(project="proj", content="milestone reached")
+        assert "Memory saved" in result
+        assert "proj" in result
+
+    def test_save_memory_with_tags(self, initialized_store):
+        """Saving a memory with tags succeeds."""
+        initialized_store.create_project(id="proj", name="P")
+        result = muninn_save_memory(project="proj", content="v1 release", tags=["release"])
+        assert "Memory saved" in result
+
+    def test_save_memory_project_not_found(self, initialized_store):
+        """Saving a memory to a nonexistent project returns an error."""
+        result = muninn_save_memory(project="nonexistent", content="hello")
+        assert "Error" in result
+        assert "not found" in result
+
+    def test_save_memory_empty_content(self, initialized_store):
+        """Saving a memory with empty content returns an error."""
+        initialized_store.create_project(id="proj", name="P")
+        result = muninn_save_memory(project="proj", content="")
+        assert "Error" in result
+
+    def test_save_memory_whitespace_content(self, initialized_store):
+        """Saving a memory with whitespace-only content returns an error."""
+        initialized_store.create_project(id="proj", name="P")
+        result = muninn_save_memory(project="proj", content="   ")
+        assert "Error" in result
 
 
 # ---------------------------------------------------------------------------

@@ -33,6 +33,7 @@ from muninn.tools import (
     muninn_manage,
     muninn_recall,
     muninn_save,
+    muninn_save_memory,
     muninn_search,
     muninn_status,
     muninn_sync,
@@ -257,6 +258,7 @@ def _create_mcp(
     )
     _enable_dynamic_instructions(mcp, resolved_store)
     mcp.tool()(muninn_save)
+    mcp.tool()(muninn_save_memory)
     mcp.tool()(muninn_recall)
     mcp.tool()(muninn_search)
     mcp.tool()(muninn_status)
